@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TA KITA - Sistem Analisis Mikrobiologi</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --secondary: #0ea5e9;
+            --bg-color: #f0f9ff;
+            --surface: rgba(255, 255, 255, 0.85);
+            --border: rgba(255, 255, 255, 0.4);
+            --text-main: #1e293b;
+            --text-muted: #64748b;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
+            color: var(--text-main);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+            animation: fadeInDown 0.8s ease-out;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(to right, #0369a1, #2563eb);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        p.subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+        }
+
+        /* Glassmorphism Cards */
+        .glass-card {
+            background: var(--surface);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 2.5rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .upload-section {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .drop-zone {
+            border: 2px dashed #93c5fd;
+            border-radius: 16px;
+            padding: 3rem 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: rgba(255, 255, 255, 0.5);
+            margin-bottom: 1.5rem;
+        }
+
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: var(--primary);
+            background: rgba(219, 234, 254, 0.5);
+        }
+
+        .drop-zone p {
+            margin: 10px 0 0;
+            color: var(--primary);
+            font-weight: 500;
+        }
+
+        #file-input {
+            display: none;
+        }
+
+        .controls {
+            display: flex;
+            align-items: flex-start;
+            flex-direction: column;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 12px;
+        }
+
+        .radio-option {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 8px;
+            transition: background 0.2s;
+            width: 100%;
+        }
+
+        .radio-option:hover {
+            background: rgba(255,255,255,0.8);
+        }
+
+        .btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px 28px;
+            font-size: 1rem;
+            font-weight: 600;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+            width: 100%;
+        }
+
+        .btn:hover:not(:disabled) {
+            background: var(--primary-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(37, 99, 235, 0.4);
+        }
+
+        .btn:disabled {
+            background: #94a3b8;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .results-container {
+            display: none;
+            margin-top: 4rem;
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 2rem;
+        }
+
+        @media(min-width: 900px) {
+            .results-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        .preview-box {
+            position: relative;
+            width: 100%;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            background: #000;
+            user-select: none;
+            -webkit-user-drag: none;
+        }
+
+        #preview-img {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-height: 500px;
+            object-fit: contain;
+            pointer-events: none;
+        }
+
+        #overlay-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+        }
+
+        .crops-gallery {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 15px;
+            margin-top: 1rem;
+        }
+
+        .crop-item {
+            background: white;
+            border-radius: 12px;
+            padding: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            text-align: center;
+            transition: transform 0.2s;
+        }
+        
+        .crop-item:hover {
+            transform: scale(1.05);
+        }
+
+        .crop-item img {
+            width: 100%;
+            height: 100px;
+            object-fit: cover;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border: 1px solid #e2e8f0;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: white;
+        }
+
+        .badge.positif { background-color: #8b5cf6; } /* Purple for G+ */
+        .badge.negatif { background-color: #ec4899; } /* Pink for G- */
+        .badge.unknown { background-color: #64748b; } 
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 1rem;
+            color: var(--primary);
+            font-weight: 500;
+        }
+
+        .spinner {
+            border: 4px solid rgba(37, 99, 235, 0.2);
+            border-left-color: var(--primary);
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-right: 10px;
+        }
+
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes fadeInDown { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>Laboratorium TA KITA</h1>
+        <p class="subtitle">Sistem Deteksi Otomatis Spesimen Mikrobiologi</p>
+    </header>
+
+    <div class="glass-card upload-section">
+        <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="#60a5fa" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
+            <p id="file-name-display">Klik atau Tarik foto spesimen ke sini</p>
+        </div>
+        <input type="file" id="file-input" accept="image/*">
+
+        <div id="preview-wrapper" style="display: none; margin-bottom: 2rem;">
+            <div class="preview-box" id="preview-box">
+                <img id="preview-img" src="" alt="Specimen Preview">
+                <canvas id="overlay-canvas"></canvas>
+            </div>
+            <div id="roi-instructions" style="display:none; text-align:center; padding: 10px; background: #fffbeb; color: #b45309; border-radius: 8px; margin-top: 10px; font-weight: 500; font-size:0.9rem;">
+                Tarik kotak (drag kursor) di atas gambar untuk menentukan area. Anda dapat menggambar kotak sebanyak mungkin!
+                <button type="button" onclick="clearROIs()" style="margin-left:10px; padding:4px 8px; font-size:0.8rem; border-radius:4px; border:1px solid #b45309; background:transparent; color:#b45309; cursor:pointer;" onmouseover="this.style.background='#fdf4ff'" onmouseout="this.style.background='transparent'">Hapus Kotak</button>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div style="width: 100%;">
+                <strong style="display:block; margin-bottom:4px;">Metode Analisis</strong>
+                <span style="font-size:0.85rem; color: #64748b;">Pilih bagaimana AI bekerja pada gambar Anda</span>
+            </div>
+            <div style="display: flex; flex-direction: column; width: 100%;">
+                <label class="radio-option">
+                    <input type="radio" name="ai_mode" value="auto" checked onchange="toggleROIMode()"> 
+                    <span><strong>🤖 Auto-Detect (YOLO)</strong> - Cari bakteri di seluruh gambar</span>
+                </label>
+                <label class="radio-option">
+                    <input type="radio" name="ai_mode" value="manual" onchange="toggleROIMode()"> 
+                    <span><strong>🖍️ Manual ROI</strong> - Tentukan secara spesifik area pencarian (Tarik kotak)</span>
+                </label>
+                <label class="radio-option">
+                    <input type="radio" name="ai_mode" value="none" onchange="toggleROIMode()"> 
+                    <span><strong>📤 Hanya Unggah</strong> - Simpan gambar ke database tanpa deteksi</span>
+                </label>
+            </div>
+        </div>
+
+        <button class="btn" id="submit-btn" onclick="processAnalysis()">Mulai Analisis</button>
+        <div class="loading" id="loading-indicator">
+            <div class="spinner"></div> <span>Sedang memproses jutaan piksel... Mohon tunggu.</span>
+        </div>
+    </div>
+
+    <!-- Results Area -->
+    <div class="results-container" id="results-container">
+        <!-- Message box -->
+        <div id="result-message" style="margin-bottom:1.5rem; text-align:center; font-weight:600; color:var(--primary); background:rgba(219,234,254,0.7); padding:1rem; border-radius:12px;"></div>
+
+        <div class="results-grid" style="grid-template-columns: 1fr;">
+            <!-- Gallery of crops -->
+            <div class="glass-card" style="padding: 1.5rem; display: flex; flex-direction: column;">
+                <h3 style="margin-top:0;" id="gallery-title">Hasil Klasifikasi (Antrean Validasi)</h3>
+                <p style="color:var(--text-muted); font-size: 0.9rem; margin-top:-10px; margin-bottom:15px;">
+                    Daftar potongan yang diidentifikasi oleh bot dan masuk ke antrean validasi Anda.
+                </p>
+                <div class="crops-gallery" id="crops-gallery" style="overflow-y: auto; flex-grow: 1;">
+                    <!-- Items will be injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const fileInput = document.getElementById('file-input');
+    const dropZone = document.getElementById('drop-zone');
+    const fileNameDisplay = document.getElementById('file-name-display');
+    const submitBtn = document.getElementById('submit-btn');
+    const loadingUI = document.getElementById('loading-indicator');
+    const resultsContainer = document.getElementById('results-container');
+    const previewImg = document.getElementById('preview-img');
+    const canvas = document.getElementById('overlay-canvas');
+    const gallery = document.getElementById('crops-gallery');
+    
+    let selectedFile = null;
+    let roisList = [];
+    let isDrawing = false;
+    let startX = 0, startY = 0;
+
+    function clearROIs() {
+        roisList = [];
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function toggleROIMode() {
+        const mode = document.querySelector('input[name="ai_mode"]:checked').value;
+        const instructions = document.getElementById('roi-instructions');
+        const ctx = canvas.getContext('2d');
+        
+        if (mode === 'manual') {
+            canvas.style.cursor = 'crosshair';
+            instructions.style.display = 'block';
+            canvas.style.pointerEvents = 'auto';
+            redrawROIs(ctx);
+        } else {
+            canvas.style.cursor = 'default';
+            instructions.style.display = 'none';
+            canvas.style.pointerEvents = 'none';
+            roisList = [];
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+    }
+
+    function redrawROIs(ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.setLineDash([]);
+        ctx.lineWidth = 4;
+        
+        roisList.forEach((r, idx) => {
+            ctx.strokeStyle = '#2563eb';
+            ctx.strokeRect(r.x, r.y, r.width, r.height);
+            ctx.fillStyle = "rgba(37, 99, 235, 0.2)";
+            ctx.fillRect(r.x, r.y, r.width, r.height);
+            
+            ctx.fillStyle = "#1d4ed8";
+            ctx.fillRect(r.x, r.y - 25, 60, 25);
+            ctx.fillStyle = "white";
+            ctx.font = "bold 14px Inter";
+            ctx.fillText("#" + (idx + 1), r.x + 5, r.y - 8);
+        });
+    }
+
+    // Initialize Canvas for Drawing
+    canvas.addEventListener('mousedown', (e) => {
+        if (document.querySelector('input[name="ai_mode"]:checked').value !== 'manual') return;
+        
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        startX = (e.clientX - rect.left) * scaleX;
+        startY = (e.clientY - rect.top) * scaleY;
+        isDrawing = true;
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+        if (!isDrawing) return;
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        const currX = (e.clientX - rect.left) * scaleX;
+        const currY = (e.clientY - rect.top) * scaleY;
+        
+        const ctx = canvas.getContext('2d');
+        redrawROIs(ctx);
+        
+        ctx.strokeStyle = '#2563eb';
+        ctx.lineWidth = 4;
+        ctx.setLineDash([6, 6]);
+        ctx.strokeRect(startX, startY, currX - startX, currY - startY);
+        ctx.fillStyle = "rgba(37, 99, 235, 0.2)";
+        ctx.fillRect(startX, startY, currX - startX, currY - startY);
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+        if (!isDrawing) return;
+        isDrawing = false;
+        
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        const endX = (e.clientX - rect.left) * scaleX;
+        const endY = (e.clientY - rect.top) * scaleY;
+        
+        const x = Math.min(startX, endX);
+        const y = Math.min(startY, endY);
+        const w = Math.abs(startX - endX);
+        const h = Math.abs(startY - endY);
+        
+        const ctx = canvas.getContext('2d');
+        ctx.setLineDash([]); // Reset dashboard lines
+        
+        if (w > 20 && h > 20) { 
+            roisList.push({x: Math.round(x), y: Math.round(y), width: Math.round(w), height: Math.round(h)});
+        }
+        redrawROIs(ctx);
+    });
+    
+    // Reset drawing when cursor leaves canvas early
+    canvas.addEventListener('mouseleave', () => { isDrawing = false; });
+
+    // Drag and Drop Handling
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) {
+            handleFileSelect(e.dataTransfer.files[0]);
+        }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length) {
+            handleFileSelect(e.target.files[0]);
+        }
+    });
+
+    function handleFileSelect(file) {
+        if (!file.type.startsWith('image/')) {
+            alert('Tolong unggah file gambar yang valid.');
+            return;
+        }
+        selectedFile = file;
+        fileNameDisplay.textContent = file.name;
+        
+        // Setup raw preview immediately
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            previewImg.src = e.target.result;
+            document.getElementById('preview-wrapper').style.display = 'block';
+            // Hide previous results
+            resultsContainer.style.display = 'none';
+            // Match canvas size to image exact natural resolution when loaded
+            previewImg.onload = () => {
+                canvas.width = previewImg.naturalWidth;
+                canvas.height = previewImg.naturalHeight;
+                toggleROIMode();
+            };
+        };
+        reader.readAsDataURL(file);
+    }
+
+    async function processAnalysis() {
+        if (!selectedFile) {
+            alert('Mohon pilih file spesimen terlebih dahulu!');
+            return;
+        }
+
+        const mode = document.querySelector('input[name="ai_mode"]:checked').value;
+        const endpoint = (mode === 'none') ? '/api/analysis/upload-specimen' : '/api/analysis/process-specimen';
+        
+        // Prepare Form Data (Hardcode patient_id = 1 for demo purposes)
+        const formData = new FormData();
+        formData.append('patient_id', '1'); 
+        formData.append('file', selectedFile);
+
+        if (mode === 'manual') {
+            if (roisList.length === 0) {
+                alert('Tarik (Drag) kursor pada gambar untuk menggambar minimal 1 area kotak (ROI) terlebih dahulu!');
+                return;
+            }
+            formData.append('manual_rois', JSON.stringify(roisList));
+        }
+
+        // UI States
+        submitBtn.disabled = true;
+        loadingUI.style.display = 'block';
+        document.getElementById('result-message').style.display = 'none';
+        resultsContainer.style.display = 'none';
+        gallery.innerHTML = '';
+        
+        // Clear canvas if not manual mode to prepare for YOLO boxes
+        const ctx = canvas.getContext('2d');
+        if (mode !== 'manual') {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || 'Terjadi kesalahan pada server');
+            }
+
+            displayResults(data, mode);
+
+        } catch (error) {
+            alert(`Gagal: ${error.message}`);
+        } finally {
+            submitBtn.disabled = false;
+            loadingUI.style.display = 'none';
+        }
+    }
+
+    function displayResults(data, mode) {
+        resultsContainer.style.display = 'block';
+        const msgBox = document.getElementById('result-message');
+        msgBox.style.display = 'block';
+        
+        if (mode === 'none') {
+            msgBox.innerText = `✅ Spesimen berhasil diunggah (ID: ${data.id}) tanpa diproses AI.`;
+            document.getElementById('gallery-title').innerText = "Tidak Ada Proses Analisis";
+            document.querySelector('.crops-gallery').innerHTML = "<p style='grid-column: 1/-1; text-align:center; color:#64748b; margin-top:2rem;'>Pemrosesan AI dinonaktifkan. Gambar hanya tersimpan di server PostgreSQL.</p>";
+            return;
+        }
+
+        // Auto Crop / Manual Routine
+        msgBox.innerText = `✨ ${data.message} (Specimen ID: ${data.specimen_id})`;
+        document.getElementById('gallery-title').innerText = `Ditemukan ${data.total_detected} Objek Bakteri`;
+
+        // Draw Bounding Boxes from AI
+        drawBoundingBoxes(data.results);
+
+        // Populate Gallery
+        if (data.results && data.results.length > 0) {
+            data.results.forEach((crop, index) => {
+                const div = document.createElement('div');
+                div.className = 'crop-item';
+                
+                let badgeClass = 'unknown';
+                if(crop.classification_gram === 'Positif') badgeClass = 'positif';
+                if(crop.classification_gram === 'Negatif') badgeClass = 'negatif';
+
+                // Gram labels logic
+                let labelText = `Gram ${crop.classification_gram}`;
+                
+                div.innerHTML = `
+                    <img src="${crop.image_file_name}" alt="Crop ${index}" loading="lazy">
+                    <div class="badge ${badgeClass}">${labelText}</div>
+                    <div style="font-size: 0.7rem; color: #64748b; margin-top: 6px;">
+                        ResNet: ${(crop.classification_confidence * 100).toFixed(1)}%<br>
+                        YOLO: ${(crop.yolo_confidence * 100).toFixed(1)}%
+                    </div>
+                `;
+                gallery.appendChild(div);
+            });
+        } else {
+            gallery.innerHTML = "<p style='grid-column: 1/-1; text-align:center; color:#64748b;'>Tidak ada bakteri terpindai oleh YOLO.</p>";
+        }
+    }
+
+    function drawBoundingBoxes(results) {
+        // Sync canvas resolution with natural image resolution
+        canvas.width = previewImg.naturalWidth;
+        canvas.height = previewImg.naturalHeight;
+        
+        // Scale canvas CSS to overlay exactly on the responsive image
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        ctx.lineWidth = 4;
+        ctx.font = "bold 24px Inter";
+
+        results.forEach(res => {
+            const [x1, y1, x2, y2] = res.bbox;
+            const width = x2 - x1;
+            const height = y2 - y1;
+
+            // Choose color based on prediction
+            let color = "#3b82f6"; // default blue
+            if(res.classification_gram === 'Positif') color = "#8b5cf6"; // Purple
+            if(res.classification_gram === 'Negatif') color = "#ec4899"; // Pink
+
+            // Draw box
+            ctx.strokeStyle = color;
+            ctx.strokeRect(x1, y1, width, height);
+
+            // Draw label background
+            const text = `${res.classification_gram}`;
+            const textWidth = ctx.measureText(text).width;
+            ctx.fillStyle = color;
+            ctx.fillRect(x1, y1 - 35, textWidth + 16, 35);
+            
+            // Draw text
+            ctx.fillStyle = "white";
+            ctx.fillText(text, x1 + 8, y1 - 10);
+        });
+    }
+
+</script>
+
+</body>
+</html>
