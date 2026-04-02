@@ -55,6 +55,13 @@ test_model/
 *.db
 *.sqlite3
 
+# Models
+models/
+!models/
+!models/*.pt
+!models/*.weights
+!models/*.h5
+
 # OS generated files
 .DS_Store
 Thumbs.db

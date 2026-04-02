@@ -12,7 +12,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Default YOLO Model Path provided by the user
 # Normally placed in env vars, but hardcoded as per the user's specific workflow path
-YOLO_MODEL_PATH = Path(r"d:\kerja\dataset\runs\detect\bacteria_yolo_s_optimized\weights\best.pt")
+YOLO_MODEL_PATH = Path(r"d:\kerja\dataset\models\bacteria_yolo_model.pt")
 
 YOLO_MODEL = None
 YOLO_LOADED = False
