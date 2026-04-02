@@ -163,6 +163,7 @@ app.add_middleware(
 
 # Mount uploads directory so images can be accessed via URL
 app.mount("/static", StaticFiles(directory="uploads"), name="static")
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Mount frontend folder for demo UI
 app.mount("/demo", StaticFiles(directory="frontend", html=True), name="frontend")
