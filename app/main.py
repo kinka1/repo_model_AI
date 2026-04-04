@@ -19,7 +19,7 @@ load_dotenv()
 
 from app.database import engine, get_db
 import app.models as db_models
-from app.routers import patients, analysis
+from app.routers import patients, analysis, dokter
 
 app = FastAPI(
     title="🔬 Gram Bacteria Classification API",
@@ -29,10 +29,11 @@ app = FastAPI(
 
 app.include_router(patients.router)
 app.include_router(analysis.router)
+app.include_router(dokter.router)
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_MODEL_PATH = ROOT_DIR / "experiments" / "scenario_4a_resnet50" / "best_model.pth"
-DEFAULT_METRICS_PATH = ROOT_DIR / "experiments" / "scenario_4a_resnet50" / "metrics_summary.json"
+DEFAULT_MODEL_PATH = ROOT_DIR / "models" / "best_model_cnn.pth"
+DEFAULT_METRICS_PATH = ROOT_DIR / "models" / "metrics_summary.json"
 MODEL_PATH = Path(os.environ.get("GRAM_MODEL_PATH", str(DEFAULT_MODEL_PATH)))
 
 CLASS_LABELS = ["Gram Negative (G-)", "Gram Positive (G+)"]

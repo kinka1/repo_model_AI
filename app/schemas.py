@@ -1,6 +1,22 @@
 from pydantic import BaseModel, Field
 from datetime import date, datetime
-from typing import List, Optional
+from typing import List, Optional, Generic, TypeVar
+
+T = TypeVar("T")
+
+# ===============================
+# PAGINATION SCHEMAS
+# ===============================
+
+class PaginationMeta(BaseModel):
+    total: int
+    page: int
+    per_page: int
+    last_page: int
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    data: List[T]
+    meta: PaginationMeta
 
 # ===============================
 # PATIENT SCHEMAS
@@ -82,3 +98,59 @@ class AnalysisProcessResponse(BaseModel):
     total_detected: int
     results: List[ProcessedCrop]
     message: str
+
+# ===============================
+# REPORT SCHEMAS
+# ===============================
+
+class AnalysisCountDetail(BaseModel):
+    positif: int
+    negatif: int
+
+class AnalysisReportResponse(BaseModel):
+    created_at: datetime
+    date: date
+    nama_pasien: str
+    kode_sample: str
+    detail_jumlah: AnalysisCountDetail
+    status_validasi: str
+
+# ===============================
+# VALIDATION SCHEMAS
+# ===============================
+
+class ValidationUpdate(BaseModel):
+    validation_gram: str
+    validation_bentuk: Optional[str] = None
+    catatan_dokter: Optional[str] = None
+    reannotated_by_user_id: Optional[int] = None
+
+class ValidationResponse(BaseModel):
+    id: int
+    validation_gram: Optional[str]
+    validation_bentuk: Optional[str]
+    catatan_dokter: Optional[str]
+    reannotated_at: Optional[datetime]
+    message: str
+
+# ===============================
+# DOCTOR VALIDATION SCHEMAS
+# ===============================
+
+class PatientDetail(BaseModel):
+    id_pasien: str
+    nama_lengkap: str
+    tanggal_lahir: date
+    umur: int
+    jenis_kelamin: str
+
+class ValidationTask(BaseModel):
+    id: int  # classification_id
+    patient: PatientDetail
+    image_url: str
+    classification_gram: str
+    classification_bentuk: Optional[str]
+    confidence_score: float
+    kode_sample: str
+
+

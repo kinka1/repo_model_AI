@@ -149,7 +149,53 @@
             box-shadow: none;
         }
 
-        .results-container {
+        /* History Table Styles */
+        .history-section {
+            margin-top: 5rem;
+            animation: fadeIn 1s ease-out;
+            padding-bottom: 5rem;
+        }
+
+        .report-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+            background: white;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        }
+
+        .report-table th, .report-table td {
+            text-align: left;
+            padding: 16px 20px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .report-table th {
+            background: #f8fafc;
+            font-weight: 600;
+            color: #475569;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .report-table tr:hover td {
+            background: #f0f9ff;
+        }
+
+        .status-pill {
+            padding: 4px 10px;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .status-wait-sample { background: #fee2e2; color: #991b1b; }
+        .status-wait-valid { background: #fef3c7; color: #92400e; }
+        .status-done { background: #dcfce7; color: #166534; }
+
+        .loading {
             display: none;
             margin-top: 4rem;
             animation: fadeIn 0.8s ease-out;
@@ -335,8 +381,38 @@
             </div>
         </div>
     </div>
+    <!-- History Report Section -->
+    <div class="history-section" id="history-section">
+        <div class="glass-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 1.5rem;">
+                <h2 style="margin:0;">Riwayat Laporan</h2>
+                <button class="btn" style="width:auto; padding: 8px 16px; font-size:0.85rem;" onclick="loadReport(1)">Refresh</button>
+            </div>
+            
+            <div style="overflow-x: auto;">
+                <table class="report-table">
+                    <thead>
+                        <tr>
+                            <th>Tanggal</th>
+                            <th>Nama Pasien</th>
+                            <th>Sampel</th>
+                            <th>Hasil AI (+/-)</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="report-tbody">
+                        <!-- Data will be injected here -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Generic Pagination Container -->
+            <div id="report-pagination"></div>
+        </div>
+    </div>
 </div>
 
+<script src="js/pagination.js"></script>
 <script>
     const fileInput = document.getElementById('file-input');
     const dropZone = document.getElementById('drop-zone');
@@ -646,6 +722,62 @@
             ctx.fillText(text, x1 + 8, y1 - 10);
         });
     }
+
+    // --- REUSABLE REPORT LOGIC ---
+    let reportPagination = null;
+
+    async function loadReport(page = 1) {
+        const tbody = document.getElementById('report-tbody');
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:3rem;">Memuat data laporan...</td></tr>';
+
+        try {
+            const response = await fetch(`/api/analysis/report?page=${page}&per_page=10`);
+            const result = await response.json();
+            
+            const data = result.data;
+            const meta = result.meta;
+
+            if (data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:3rem; color:#64748b;">Belum ada riwayat laporan tersedia.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = '';
+            data.forEach(item => {
+                let statusClass = '';
+                if (item.status_validasi === 'Menunggu sampel') statusClass = 'status-wait-sample';
+                else if (item.status_validasi === 'menunggu validasi') statusClass = 'status-wait-valid';
+                else if (item.status_validasi === 'sudah validasi') statusClass = 'status-done';
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="font-size:0.85rem; color:#64748b;">${item.date} <br><small>${new Date(item.created_at).toLocaleTimeString()}</small></td>
+                    <td><strong>${item.nama_pasien}</strong></td>
+                    <td style="font-family:monospace; font-size:0.8rem;">${item.kode_sample}</td>
+                    <td>
+                        <span style="color:#8b5cf6;">+${item.detail_jumlah.positif}</span> / 
+                        <span style="color:#ec4899;">-${item.detail_jumlah.negatif}</span>
+                    </td>
+                    <td><span class="status-pill ${statusClass}">${item.status_validasi}</span></td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            // Update Pagination UI
+            if (!reportPagination) {
+                reportPagination = new PaginationComponent('report-pagination', (newPage) => loadReport(newPage));
+            }
+            reportPagination.render(meta);
+
+        } catch (error) {
+            tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; padding:3rem; color:#ef4444;">Gagal memuat laporan: ${error.message}</td></tr>`;
+        }
+    }
+
+    // Load Initial Report
+    document.addEventListener('DOMContentLoaded', () => {
+        loadReport(1);
+    });
 
 </script>
 

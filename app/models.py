@@ -116,12 +116,14 @@ class Specimen(Base):
     
     # Relationship
     patient = relationship("Patient", back_populates="specimens")
+    classifications = relationship("Classification", back_populates="specimen", cascade="all, delete-orphan")
 
 class Classification(Base):
     __tablename__ = "classifications"
 
     id = Column(Integer, primary_key=True, index=True)
     patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False, index=True)
+    specimen_id = Column(Integer, ForeignKey("specimens.id", ondelete="CASCADE"), nullable=True, index=True)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=True)
     image_file_name = Column(String(255), nullable=False)
     image_path = Column(String(500), nullable=False)
@@ -145,5 +147,6 @@ class Classification(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Relationship back to Patient
+    # Relationships
     patient = relationship("Patient", back_populates="classifications")
+    specimen = relationship("Specimen", back_populates="classifications")

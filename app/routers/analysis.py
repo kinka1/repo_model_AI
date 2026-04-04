@@ -2,13 +2,18 @@ import os
 import shutil
 import uuid
 from typing import List, Optional
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, Request
+from datetime import datetime, date
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, Request, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Patient, Specimen, Classification, AIModel
-from app.schemas import SpecimenUploadResponse, AnalysisSessionSubmit, AnalysisSessionResponse, AnalysisProcessResponse
+from app.schemas import (
+    SpecimenUploadResponse, AnalysisSessionSubmit, AnalysisSessionResponse, 
+    AnalysisProcessResponse, AnalysisReportResponse, AnalysisCountDetail,
+    PaginatedResponse
+)
+from app.utils import paginate_query
 
 router = APIRouter(
     prefix="/api/analysis",
@@ -20,11 +25,13 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def map_predictions_to_db(gram_label: str) -> str:
     # Map from ML output format to DB constraints ['Positif', 'Negatif']
-    if "Positive" in gram_label or "G+" in gram_label:
+    # If it doesn't match, return original (less strict)
+    label_lower = gram_label.lower()
+    if "positive" in label_lower or "g+" in label_lower or "positif" in label_lower:
         return "Positif"
-    elif "Negative" in gram_label or "G-" in gram_label:
+    elif "negative" in label_lower or "g-" in label_lower or "negatif" in label_lower:
         return "Negatif"
-    return "Positif" # Default safe fallback
+    return gram_label # Allow original string if no match found
 
 @router.post("/upload-specimen", response_model=SpecimenUploadResponse)
 def upload_specimen(
@@ -79,19 +86,22 @@ def submit_analysis(payload: AnalysisSessionSubmit, db: Session = Depends(get_db
     classifications_to_save = []
     
     for crop in payload.crops:
-        # Pengecekan constraint Enum
+        # Pengecekan standar Gram dan Bentuk
         gram_mapped = map_predictions_to_db(crop.classification_gram)
-        bentuk = crop.classification_bentuk if crop.classification_bentuk in ['Batang', 'Kokus'] else None
+        # Tidak lagi memaksa None jika tidak di dalam list
+        bentuk = crop.classification_bentuk 
+        if bentuk and bentuk.lower() == "batang": bentuk = "Batang"
+        if bentuk and bentuk.lower() == "kokus": bentuk = "Kokus"
         
         entry = Classification(
             patient_id=payload.patient_id,
+            specimen_id=payload.specimen_id,
             image_file_name=crop.image_file_name,
-            image_path=f"uploads/crops/{crop.image_file_name}", # Bisa diganti berdasarkan base API logic image upload anda
+            image_path=f"uploads/crops/{crop.image_file_name}", 
             classified_by_model_id=model_id,
             classification_gram=gram_mapped,
             classification_bentuk=bentuk,
             confidence_score=crop.confidence_score,
-            # validation_gram dan validation_bentuk dibiarkan None supaya terlempar ke timelines dokter
         )
         
         classifications_to_save.append(entry)
@@ -213,6 +223,7 @@ def process_specimen_automated(
 
         db_class = Classification(
             patient_id=patient_id,
+            specimen_id=db_specimen.id,
             image_file_name=crop_filename,
             image_path=crop_path,
             classified_by_model_id=model_id,
@@ -261,3 +272,73 @@ def process_specimen_automated(
         results=response_crops,
         message=f"Berhasil mendeteksi {len(crops_data)} bakteri dan dikirim ke sistem klasifikasi."
     )
+
+@router.get("/report", response_model=PaginatedResponse[AnalysisReportResponse])
+def get_analysis_report(
+    date_filter: Optional[date] = Query(None, description="Format: YYYY-MM-DD"), 
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1),
+    db: Session = Depends(get_db)
+):
+    """
+    Mengambil ringkasan laporan analisis untuk setiap spesimen.
+    Bisa difilter berdasarkan tanggal tertentu dan dipagination.
+    """
+    # Query dasar: Ambil data terbaru untuk setiap pasien
+    from sqlalchemy import func, and_
+    
+    # Subquery untuk mencari uploaded_at terbaru per patient_id
+    subquery = db.query(
+        Specimen.patient_id, 
+        func.max(Specimen.uploaded_at).label("max_date")
+    ).group_by(Specimen.patient_id).subquery()
+    
+    # Query utama dengan join ke subquery
+    query = db.query(Specimen).join(
+        subquery, 
+        and_(
+            Specimen.patient_id == subquery.c.patient_id,
+            Specimen.uploaded_at == subquery.c.max_date
+        )
+    ).join(Patient)
+    
+    # Filter tanggal jika ada
+    if date_filter:
+        from sqlalchemy import cast, Date
+        query = query.filter(cast(Specimen.uploaded_at, Date) == date_filter)
+    
+    # Ambil spesimen terbaru hasil filter dengan pagination
+    paginated_specimens, pagination_meta = paginate_query(query.order_by(Specimen.uploaded_at.desc()), page, per_page)
+    
+    results = []
+    for spec in paginated_specimens:
+        # Hitung detail jumlah gram positif dan negatif
+        classifications = db.query(Classification).filter(Classification.specimen_id == spec.id).all()
+        
+        total = len(classifications)
+        positive = sum(1 for c in classifications if c.classification_gram == "Positif")
+        negative = sum(1 for c in classifications if c.classification_gram == "Negatif")
+        
+        # Logika Status Validasi
+        validated = sum(1 for c in classifications if c.validation_gram is not None)
+        
+        if total == 0:
+            status = "Menunggu sampel"
+        elif validated == total:
+            status = "sudah validasi"
+        else:
+            status = "menunggu validasi"
+            
+        results.append(AnalysisReportResponse(
+            created_at=spec.uploaded_at,
+            date=spec.uploaded_at.date(),
+            nama_pasien=spec.patient.nama_lengkap,
+            kode_sample=os.path.splitext(spec.file_name)[0],
+            detail_jumlah=AnalysisCountDetail(
+                positif=positive,
+                negatif=negative
+            ),
+            status_validasi=status
+        ))
+        
+    return PaginatedResponse(data=results, meta=pagination_meta)
