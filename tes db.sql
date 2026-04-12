@@ -328,6 +328,7 @@ CREATE TABLE IF NOT EXISTS public.patients
     tanggal_lahir date NOT NULL,
     alamat text COLLATE pg_catalog."default",
     no_telepon character varying(20) COLLATE pg_catalog."default",
+    patient_date timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     created_by_user_id integer,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
@@ -367,6 +368,15 @@ CREATE INDEX IF NOT EXISTS idx_patients_id_pasien
 CREATE INDEX IF NOT EXISTS idx_patients_nama
     ON public.patients USING btree
     (nama_lengkap COLLATE pg_catalog."default" ASC NULLS LAST)
+    TABLESPACE pg_default;
+
+-- Index: idx_patients_patient_date
+
+-- DROP INDEX IF EXISTS public.idx_patients_patient_date;
+
+CREATE INDEX IF NOT EXISTS idx_patients_patient_date
+    ON public.patients USING btree
+    (patient_date ASC NULLS LAST)
     TABLESPACE pg_default;
 
 -- Trigger: update_patients_updated_at
