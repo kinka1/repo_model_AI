@@ -42,11 +42,16 @@ def calculate_age(birth_date: date) -> int:
     today = date.today()
     return today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
 
-@router.get("/pending-validation", response_model=List[ValidationTask])
+@router.get("/pending-validation", response_model=List[ValidationTask], deprecated=True)
 def get_pending_validation(
     request: Request,
     db: Session = Depends(get_db)
 ):
+    raise HTTPException(
+        status_code=410,
+        detail="Endpoint /api/dokter/pending-validation sudah deprecated. Gunakan /api/analysis/doctor-queue.",
+    )
+
     """
     Mengambil daftar klasifikasi yang belum divalidasi oleh dokter (validation_gram is Null).
     Serta menyertakan detail informasi pasien dan umur.
@@ -82,12 +87,17 @@ def get_pending_validation(
         
     return results
 
-@router.patch("/classification/{classification_id}/validate", response_model=ValidationResponse)
+@router.patch("/classification/{classification_id}/validate", response_model=ValidationResponse, deprecated=True)
 def validate_classification(
     classification_id: int, 
     payload: ValidationUpdate, 
     db: Session = Depends(get_db)
 ):
+    raise HTTPException(
+        status_code=410,
+        detail="Endpoint /api/dokter/classification/{id}/validate sudah deprecated. Gunakan /api/analysis/submit-validation.",
+    )
+
     """
     Memperbarui status validasi dokter untuk satu hasil deteksi/crop.
     """
