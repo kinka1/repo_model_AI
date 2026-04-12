@@ -95,6 +95,7 @@ class Patient(Base):
     tanggal_lahir = Column(Date, nullable=False)
     alamat = Column(Text, nullable=True)
     no_telepon = Column(String(20), nullable=True)
+    patient_date = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -102,6 +103,10 @@ class Patient(Base):
     # Relationships
     classifications = relationship("Classification", back_populates="patient", cascade="all, delete-orphan")
     specimens = relationship("Specimen", back_populates="patient", cascade="all, delete-orphan")
+
+    @property
+    def date(self):
+        return self.patient_date
 
 class Specimen(Base):
     """Tabel tambahan untuk menyimpan metadata gambar spesimen asli (utuh)."""
@@ -111,6 +116,7 @@ class Specimen(Base):
     patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
     file_name = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=False)
+    status = Column(String(20), default="pending")
     total_detected = Column(Integer, default=0, nullable=True)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     
