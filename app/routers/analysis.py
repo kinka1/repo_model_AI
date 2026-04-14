@@ -19,8 +19,8 @@ from app.schemas import (
 from app.utils import paginate_query
 
 router = APIRouter(
-    prefix="/api/analysis",
-    tags=["Analysis Process"]
+    prefix="/api/analyst",
+    tags=["Analyst Section"]
 )
 
 UPLOAD_DIR = "uploads"
@@ -45,6 +45,11 @@ def _status_label_from_specimen(status: Optional[str], total: int, validated: in
     if validated == total:
         return "Selesai"
     return "Menunggu Validasi Dokter"
+
+
+def _effective_gram_label(row: Classification) -> Optional[str]:
+    """Use doctor validation as source of truth when present."""
+    return row.validation_gram or row.classification_gram
 
 
 def _cleanup_original_specimen_file(file_path: Optional[str], specimen_id: Optional[int] = None) -> None:
@@ -75,18 +80,6 @@ class RoiIn(BaseModel):
 
 class ClassifyRequest(BaseModel):
     rois: List[RoiIn]
-
-
-class ValidationItem(BaseModel):
-    id: int
-    validation_gram: str
-    validation_bentuk: Optional[str] = None
-    catatan: Optional[str] = ""
-
-
-class DoctorValidationSubmit(BaseModel):
-    specimen_id: int
-    validations: List[ValidationItem]
 
 def map_predictions_to_db(gram_label: str) -> str:
     # Map from ML output format to DB constraints ['Positif', 'Negatif']
@@ -144,7 +137,7 @@ def submit_analysis(payload: AnalysisSessionSubmit, db: Session = Depends(get_db
 
     raise HTTPException(
         status_code=410,
-        detail="Endpoint /api/analysis/submit sudah deprecated. Gunakan alur detect -> classify. Status spesimen otomatis di-set pada /api/analysis/classify/{specimen_id}.",
+        detail="Endpoint /api/analyst/submit sudah deprecated. Gunakan alur detect -> classify. Status spesimen otomatis di-set pada /api/analyst/classify/{specimen_id}.",
     )
 
 
@@ -208,6 +201,8 @@ def classify_specimen(specimen_id: int, payload: ClassifyRequest, db: Session = 
 
     db_rows = []
     response_rows = []
+    cnn_inference_per_roi_ms = []
+    cnn_total_inference_ms = 0.0
     logger.info(
         "[CLASSIFY] start specimen_id=%s patient_id=%s total_rois=%s",
         specimen.id,
@@ -234,6 +229,9 @@ def classify_specimen(specimen_id: int, payload: ClassifyRequest, db: Session = 
 
         pred = _predict_tensor(crop)
         gram = map_predictions_to_db(pred["prediction"])
+        cnn_inference_ms = float(pred.get("inference_ms", 0.0))
+        cnn_total_inference_ms += cnn_inference_ms
+        cnn_inference_per_roi_ms.append(cnn_inference_ms)
 
         row = Classification(
             patient_id=specimen.patient_id,
@@ -262,6 +260,7 @@ def classify_specimen(specimen_id: int, payload: ClassifyRequest, db: Session = 
                 "bbox": [roi.x, roi.y, roi.x + roi.width, roi.y + roi.height],
                 "classification_gram": row.classification_gram,
                 "classification_confidence": float(row.confidence_score),
+                "cnn_inference_ms": round(cnn_inference_per_roi_ms[i], 2),
                 "image_file_name": image_url,
                 "source": roi.source,
             }
@@ -276,18 +275,22 @@ def classify_specimen(specimen_id: int, payload: ClassifyRequest, db: Session = 
     _cleanup_original_specimen_file(specimen.file_path, specimen.id)
 
     logger.info(
-        "[CLASSIFY] done specimen_id=%s total_saved=%s gram_positif=%s gram_negatif=%s status=%s",
+        "[CLASSIFY] done specimen_id=%s total_saved=%s gram_positif=%s gram_negatif=%s status=%s cnn_total_inference_ms=%.2f cnn_avg_inference_ms=%.2f",
         specimen.id,
         len(db_rows),
         total_pos,
         total_neg,
         specimen.status,
+        cnn_total_inference_ms,
+        (cnn_total_inference_ms / len(db_rows)) if db_rows else 0.0,
     )
     logger.debug("[CLASSIFY] results specimen_id=%s data=%s", specimen.id, response_rows)
 
     return {
         "specimen_id": specimen.id,
         "total_classified": len(response_rows),
+        "cnn_total_inference_ms": round(cnn_total_inference_ms, 2),
+        "cnn_avg_inference_ms": round((cnn_total_inference_ms / len(response_rows)) if response_rows else 0.0, 2),
         "results": response_rows,
     }
 
@@ -301,7 +304,7 @@ def process_specimen_automated(
 ):
     raise HTTPException(
         status_code=410,
-        detail="Endpoint /api/analysis/process-specimen sudah deprecated. Gunakan /api/analysis/detect/{specimen_id} lalu /api/analysis/classify/{specimen_id}.",
+        detail="Endpoint /api/analyst/process-specimen sudah deprecated. Gunakan /api/analyst/detect/{specimen_id} lalu /api/analyst/classify/{specimen_id}.",
     )
 
     from app.ai_pipeline import detect_and_crop
@@ -448,113 +451,6 @@ def process_specimen_automated(
     )
 
 
-@router.get("/doctor-queue")
-def get_doctor_queue(db: Session = Depends(get_db)):
-    queue = (
-        db.query(Specimen)
-        .join(Patient)
-        .filter(Specimen.status == STATUS_WAITING_VALIDATION)
-        .order_by(Specimen.uploaded_at.asc())
-        .all()
-    )
-
-    return [
-        {
-            "id_specimen": s.id,
-            "id_pasien": s.patient_id,
-            "nama_pasien": s.patient.nama_lengkap,
-            "tanggal_upload": s.uploaded_at.strftime("%Y-%m-%d %H:%M") if s.uploaded_at else None,
-            "total_bakteri": db.query(Classification).filter(
-                Classification.specimen_id == s.id,
-                Classification.image_path.like(f"%{os.path.join('crops', str(s.id))}%")
-            ).count(),
-        }
-        for s in queue
-    ]
-
-
-@router.get("/specimen-details/{specimen_id}")
-def get_specimen_details(specimen_id: int, request: Request, db: Session = Depends(get_db)):
-    specimen = db.query(Specimen).filter(Specimen.id == specimen_id).first()
-    if not specimen:
-        raise HTTPException(status_code=404, detail="Spesimen tidak ditemukan")
-
-    crops = db.query(Classification).filter(Classification.specimen_id == specimen_id).all()
-
-    # Bersihkan base URL agar tidak ada double slash
-    base_url = str(request.base_url).rstrip("/")
-
-    def _abs_url(path: Optional[str]) -> str:
-        if not path:
-            return ""
-
-        normalized = path.replace("\\", "/")
-        fs_path = normalized
-
-        # Jika path legacy tersimpan sebagai static/..., coba map ke uploads/... karena yang di-mount adalah uploads.
-        if normalized.startswith("static/"):
-            mapped = normalized.replace("static/", "uploads/", 1)
-            if os.path.exists(mapped):
-                normalized = mapped.replace("\\", "/")
-                fs_path = mapped
-
-        # Hindari kirim URL gambar yang memang tidak ada file fisiknya (mencegah spam 404 di frontend).
-        if not os.path.exists(fs_path):
-            return ""
-
-        return f"{base_url}/{normalized}"
-
-    return {
-        "specimen_id": specimen.id,
-        "patient_name": specimen.patient.nama_lengkap if specimen.patient else "Unknown",
-        "main_image_url": _abs_url(specimen.file_path),
-        "classifications": [
-            {
-                "id": c.id,
-                "ai_gram": c.classification_gram,
-                "classification_bentuk": c.classification_bentuk,
-                "confidence": float(c.confidence_score) if c.confidence_score is not None else 0.0,
-                "image_url": _abs_url(c.image_path),
-                "validation_gram": c.validation_gram,
-                "validation_bentuk": c.validation_bentuk,
-                "catatan": c.catatan_dokter,
-            }
-            for c in crops
-        ],
-    }
-
-
-@router.post("/submit-validation")
-def submit_doctor_validation(data: DoctorValidationSubmit, db: Session = Depends(get_db)):
-    specimen = db.query(Specimen).filter(Specimen.id == data.specimen_id).first()
-    if not specimen:
-        raise HTTPException(status_code=404, detail="Spesimen tidak ditemukan")
-
-    # Validasi bahwa semua ID klasifikasi milik specimen yang sama
-    for val in data.validations:
-        crop = db.query(Classification).filter(
-            Classification.id == val.id,
-            Classification.specimen_id == data.specimen_id,
-        ).first()
-        if not crop:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Classification id {val.id} tidak ditemukan pada specimen {data.specimen_id}",
-            )
-
-    # Simpan validasi dokter
-    for val in data.validations:
-        crop = db.query(Classification).filter(Classification.id == val.id).first()
-        crop.validation_gram = val.validation_gram
-        crop.validation_bentuk = val.validation_bentuk
-        crop.catatan_dokter = val.catatan
-
-    specimen.status = STATUS_VALIDATED
-    db.add(specimen)
-    db.commit()
-
-    return {"message": "Validasi berhasil disimpan dan spesimen dinyatakan selesai."}
-
 @router.get("/report", response_model=PaginatedResponse[AnalysisReportResponse])
 def get_analysis_report(
     date_filter: Optional[date] = Query(None, description="Format: YYYY-MM-DD"), 
@@ -604,8 +500,8 @@ def get_analysis_report(
             ).all()
         
         total = len(classifications)
-        positive = sum(1 for c in classifications if c.classification_gram == "Positif")
-        negative = sum(1 for c in classifications if c.classification_gram == "Negatif")
+        positive = sum(1 for c in classifications if _effective_gram_label(c) == "Positif")
+        negative = sum(1 for c in classifications if _effective_gram_label(c) == "Negatif")
         
         # Logika Status Validasi
         validated = sum(1 for c in classifications if c.validation_gram is not None)
@@ -630,58 +526,40 @@ def get_analysis_report(
 @router.get("/history")
 def get_analysis_history(db: Session = Depends(get_db)):
     rows = (
-        db.query(
-            Specimen.id.label("id_specimen"),
-            Patient.nama_lengkap.label("nama_pasien"),
-            Specimen.uploaded_at.label("tanggal"),
-            Specimen.status.label("specimen_status"),
-            func.coalesce(
-                func.sum(case((Classification.classification_gram == "Positif", 1), else_=0)), 0
-            ).label("total_g_positif"),
-            func.coalesce(
-                func.sum(case((Classification.classification_gram == "Negatif", 1), else_=0)), 0
-            ).label("total_g_negatif"),
-            func.coalesce(func.count(Classification.id), 0).label("total_klasifikasi"),
-            func.coalesce(
-                func.sum(case((Classification.validation_gram.is_(None), 1), else_=0)), 0
-            ).label("belum_validasi"),
-        )
+        db.query(Specimen, Patient)
         .join(Patient, Patient.id == Specimen.patient_id)
-        .outerjoin(Classification, Classification.specimen_id == Specimen.id)
-        .group_by(Specimen.id, Patient.nama_lengkap, Specimen.uploaded_at, Specimen.status)
         .order_by(Specimen.uploaded_at.desc())
         .all()
     )
 
     history_list = []
-    for r in rows:
-        total_g_positif = int(r.total_g_positif or 0)
-        total_g_negatif = int(r.total_g_negatif or 0)
-        total_klasifikasi = int(r.total_klasifikasi or 0)
-        belum_validasi = int(r.belum_validasi or 0)
+    for spec, patient in rows:
+        classifications = db.query(Classification).filter(Classification.specimen_id == spec.id).all()
 
         # Backward compatibility untuk data lama (sebelum specimen_id diset)
-        if total_klasifikasi == 0:
+        if not classifications:
             legacy_rows = db.query(Classification).filter(
-                Classification.image_path.like(f"%{os.path.join('crops', str(r.id_specimen))}%")
+                Classification.image_path.like(f"%{os.path.join('crops', str(spec.id))}%")
             ).all()
             if legacy_rows:
-                total_g_positif = sum(1 for c in legacy_rows if c.classification_gram == "Positif")
-                total_g_negatif = sum(1 for c in legacy_rows if c.classification_gram == "Negatif")
-                total_klasifikasi = len(legacy_rows)
-                belum_validasi = sum(1 for c in legacy_rows if c.validation_gram is None)
+                classifications = legacy_rows
+
+        total_g_positif = sum(1 for c in classifications if _effective_gram_label(c) == "Positif")
+        total_g_negatif = sum(1 for c in classifications if _effective_gram_label(c) == "Negatif")
+        total_klasifikasi = len(classifications)
+        belum_validasi = sum(1 for c in classifications if c.validation_gram is None)
 
         status = _status_label_from_specimen(
-            r.specimen_status,
+            spec.status,
             total_klasifikasi,
             total_klasifikasi - belum_validasi,
         )
 
         history_list.append(
             {
-                "id_specimen": r.id_specimen,
-                "nama_pasien": r.nama_pasien,
-                "tanggal": r.tanggal.strftime("%Y-%m-%d %H:%M") if r.tanggal else None,
+                "id_specimen": spec.id,
+                "nama_pasien": patient.nama_lengkap,
+                "tanggal": spec.uploaded_at.strftime("%Y-%m-%d %H:%M") if spec.uploaded_at else None,
                 "total_g_positif": total_g_positif,
                 "total_g_negatif": total_g_negatif,
                 "status": status,
