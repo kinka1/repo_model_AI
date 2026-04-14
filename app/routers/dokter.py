@@ -3,6 +3,7 @@ from typing import List, Optional
 from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.models import Patient, Specimen, Classification
@@ -12,9 +13,25 @@ from app.schemas import (
 )
 
 router = APIRouter(
-    prefix="/api/dokter",
+    prefix="/api/doctor",
     tags=["Doctor Section"]
 )
+
+STATUS_WAITING_VALIDATION = "waiting_validation"
+STATUS_VALIDATED = "validated"
+
+
+class ValidationItem(BaseModel):
+    id: int
+    validation_gram: str
+    validation_bentuk: Optional[str] = None
+    catatan: Optional[str] = None
+    catatan_dokter: Optional[str] = None
+
+
+class DoctorValidationSubmit(BaseModel):
+    specimen_id: int
+    validations: List[ValidationItem]
 
 def normalize_validation_values(gram: str, bentuk: Optional[str]):
     """
@@ -42,6 +59,111 @@ def calculate_age(birth_date: date) -> int:
     today = date.today()
     return today.year - birth_date.year - ((today.month, today.day) < (birth_date.month, birth_date.day))
 
+
+@router.get("/doctor-queue")
+def get_doctor_queue(db: Session = Depends(get_db)):
+    queue = (
+        db.query(Specimen)
+        .join(Patient)
+        .filter(Specimen.status == STATUS_WAITING_VALIDATION)
+        .order_by(Specimen.uploaded_at.asc())
+        .all()
+    )
+
+    return [
+        {
+            "id_specimen": s.id,
+            "id_pasien": s.patient_id,
+            "nama_pasien": s.patient.nama_lengkap,
+            "tanggal_upload": s.uploaded_at.strftime("%Y-%m-%d %H:%M") if s.uploaded_at else None,
+            "total_bakteri": db.query(Classification).filter(
+                Classification.specimen_id == s.id,
+                Classification.image_path.like(f"%{os.path.join('crops', str(s.id))}%")
+            ).count(),
+        }
+        for s in queue
+    ]
+
+
+@router.get("/specimen-details/{specimen_id}")
+def get_specimen_details(specimen_id: int, request: Request, db: Session = Depends(get_db)):
+    specimen = db.query(Specimen).filter(Specimen.id == specimen_id).first()
+    if not specimen:
+        raise HTTPException(status_code=404, detail="Spesimen tidak ditemukan")
+
+    crops = db.query(Classification).filter(Classification.specimen_id == specimen_id).all()
+
+    base_url = str(request.base_url).rstrip("/")
+
+    def _abs_url(path: Optional[str]) -> str:
+        if not path:
+            return ""
+
+        normalized = path.replace("\\", "/")
+        fs_path = normalized
+
+        if normalized.startswith("static/"):
+            mapped = normalized.replace("static/", "uploads/", 1)
+            if os.path.exists(mapped):
+                normalized = mapped.replace("\\", "/")
+                fs_path = mapped
+
+        if not os.path.exists(fs_path):
+            return ""
+
+        return f"{base_url}/{normalized}"
+
+    return {
+        "specimen_id": specimen.id,
+        "patient_name": specimen.patient.nama_lengkap if specimen.patient else "Unknown",
+        "main_image_url": _abs_url(specimen.file_path),
+        "classifications": [
+            {
+                "id": c.id,
+                "ai_gram": c.classification_gram,
+                "classification_bentuk": c.classification_bentuk,
+                "confidence": float(c.confidence_score) if c.confidence_score is not None else 0.0,
+                "image_url": _abs_url(c.image_path),
+                "validation_gram": c.validation_gram,
+                "validation_bentuk": c.validation_bentuk,
+                "catatan": c.catatan_dokter,
+            }
+            for c in crops
+        ],
+    }
+
+
+@router.post("/submit-validation")
+def submit_doctor_validation(data: DoctorValidationSubmit, db: Session = Depends(get_db)):
+    specimen = db.query(Specimen).filter(Specimen.id == data.specimen_id).first()
+    if not specimen:
+        raise HTTPException(status_code=404, detail="Spesimen tidak ditemukan")
+
+    for val in data.validations:
+        crop = db.query(Classification).filter(
+            Classification.id == val.id,
+            Classification.specimen_id == data.specimen_id,
+        ).first()
+        if not crop:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Classification id {val.id} tidak ditemukan pada specimen {data.specimen_id}",
+            )
+
+    for val in data.validations:
+        crop = db.query(Classification).filter(Classification.id == val.id).first()
+        crop.validation_gram = val.validation_gram
+        crop.validation_bentuk = val.validation_bentuk
+        note_value = val.catatan if val.catatan is not None else val.catatan_dokter
+        if note_value is not None:
+            crop.catatan_dokter = note_value
+
+    specimen.status = STATUS_VALIDATED
+    db.add(specimen)
+    db.commit()
+
+    return {"message": "Validasi berhasil disimpan dan spesimen dinyatakan selesai."}
+
 @router.get("/pending-validation", response_model=List[ValidationTask], deprecated=True)
 def get_pending_validation(
     request: Request,
@@ -49,7 +171,7 @@ def get_pending_validation(
 ):
     raise HTTPException(
         status_code=410,
-        detail="Endpoint /api/dokter/pending-validation sudah deprecated. Gunakan /api/analysis/doctor-queue.",
+        detail="Endpoint /api/doctor/pending-validation sudah deprecated. Gunakan /api/doctor/doctor-queue.",
     )
 
     """
@@ -95,7 +217,7 @@ def validate_classification(
 ):
     raise HTTPException(
         status_code=410,
-        detail="Endpoint /api/dokter/classification/{id}/validate sudah deprecated. Gunakan /api/analysis/submit-validation.",
+        detail="Endpoint /api/doctor/classification/{id}/validate sudah deprecated. Gunakan /api/doctor/submit-validation.",
     )
 
     """
