@@ -1,10 +1,12 @@
 import os
 import shutil
 import uuid
+import logging
 from typing import List, Optional
 from datetime import datetime, date
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, Request, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func, case
 from pydantic import BaseModel
 
 from app.database import get_db
@@ -17,12 +19,55 @@ from app.schemas import (
 from app.utils import paginate_query
 
 router = APIRouter(
-    prefix="/api/analysis",
-    tags=["Analysis Process"]
+    prefix="/api/analyst",
+    tags=["Analyst Section"]
 )
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+logger = logging.getLogger(__name__)
+
+STATUS_PENDING = "pending"
+STATUS_WAITING_VALIDATION = "waiting_validation"
+STATUS_VALIDATED = "validated"
+
+
+def _status_label_from_specimen(status: Optional[str], total: int, validated: int) -> str:
+    """Normalize backend status into a single UI label space."""
+    if status == STATUS_VALIDATED:
+        return "Selesai"
+    if status == STATUS_WAITING_VALIDATION:
+        return "Menunggu Validasi Dokter"
+
+    # Fallback for old records without/incorrect status
+    if total == 0:
+        return "Menunggu sampel"
+    if validated == total:
+        return "Selesai"
+    return "Menunggu Validasi Dokter"
+
+
+def _effective_gram_label(row: Classification) -> Optional[str]:
+    """Use doctor validation as source of truth when present."""
+    return row.validation_gram or row.classification_gram
+
+
+def _cleanup_original_specimen_file(file_path: Optional[str], specimen_id: Optional[int] = None) -> None:
+    """Delete original uploaded specimen file safely; keep crop files intact."""
+    if not file_path:
+        return
+
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            logger.info("[CLEANUP] removed original specimen file specimen_id=%s path=%s", specimen_id, file_path)
+    except Exception as e:
+        logger.warning("[CLEANUP] failed removing original specimen file specimen_id=%s path=%s err=%s", specimen_id, file_path, e)
+
+
+def _crops_dir_for_specimen(specimen_id: int) -> str:
+    """Physical storage directory for crop images (served via /static and /uploads mounts)."""
+    return os.path.join(UPLOAD_DIR, "crops", str(specimen_id))
 
 
 class RoiIn(BaseModel):
@@ -80,51 +125,19 @@ def upload_specimen(
     
     return specimen
 
-@router.post("/submit", response_model=AnalysisSessionResponse)
+@router.post("/submit", response_model=AnalysisSessionResponse, deprecated=True)
 def submit_analysis(payload: AnalysisSessionSubmit, db: Session = Depends(get_db)):
     """
-    Simpan hasil batch model dari image-image potongan spesimen ke tabel Classifications.
-    Setiap baris yang baru disave akan diabaikan `validation_gram` nya (Null) sehingga otomatis masuk ke "Antrean Dokter".
+    Submit ke antrean dokter TANPA membuat baris Classification baru.
+    Endpoint ini hanya:
+    1) validasi specimen/patient,
+    2) opsional update metadata klasifikasi yang sudah ada,
+    3) update status specimen menjadi waiting_validation.
     """
-    
-    # Cek pasien
-    patient = db.query(Patient).filter(Patient.id == payload.patient_id).first()
-    if not patient:
-        raise HTTPException(status_code=404, detail="Pasien tidak ditemukan. Tolong upload dengan ID asli.")
-        
-    # Ambil AI Model yang aktif (Asumsi hanya ada 1 untuk session ini)
-    active_model = db.query(AIModel).filter(AIModel.is_active == True).first()
-    model_id = active_model.id if active_model else None
-    
-    classifications_to_save = []
-    
-    for crop in payload.crops:
-        # Pengecekan standar Gram dan Bentuk
-        gram_mapped = map_predictions_to_db(crop.classification_gram)
-        # Tidak lagi memaksa None jika tidak di dalam list
-        bentuk = crop.classification_bentuk 
-        if bentuk and bentuk.lower() == "batang": bentuk = "Batang"
-        if bentuk and bentuk.lower() == "kokus": bentuk = "Kokus"
-        
-        entry = Classification(
-            patient_id=payload.patient_id,
-            specimen_id=payload.specimen_id,
-            image_file_name=crop.image_file_name,
-            image_path=f"uploads/crops/{crop.image_file_name}", 
-            classified_by_model_id=model_id,
-            classification_gram=gram_mapped,
-            classification_bentuk=bentuk,
-            confidence_score=crop.confidence_score,
-        )
-        
-        classifications_to_save.append(entry)
-        
-    db.bulk_save_objects(classifications_to_save)
-    db.commit()
-    
-    return AnalysisSessionResponse(
-        message="Sesi analisis berhasil disimpan dan dimasukkan ke antrean validasi dokter.",
-        total_submitted=len(classifications_to_save)
+
+    raise HTTPException(
+        status_code=410,
+        detail="Endpoint /api/analyst/submit sudah deprecated. Gunakan alur detect -> classify. Status spesimen otomatis di-set pada /api/analyst/classify/{specimen_id}.",
     )
 
 
@@ -183,11 +196,19 @@ def classify_specimen(specimen_id: int, payload: ClassifyRequest, db: Session = 
     model_id = active_model.id if active_model else None
 
     img = Image.open(specimen.file_path).convert("RGB")
-    crops_dir = os.path.join("static", "crops", str(specimen.id))
+    crops_dir = _crops_dir_for_specimen(specimen.id)
     os.makedirs(crops_dir, exist_ok=True)
 
     db_rows = []
     response_rows = []
+    cnn_inference_per_roi_ms = []
+    cnn_total_inference_ms = 0.0
+    logger.info(
+        "[CLASSIFY] start specimen_id=%s patient_id=%s total_rois=%s",
+        specimen.id,
+        specimen.patient_id,
+        len(payload.rois),
+    )
 
     for idx, r in enumerate(payload.rois):
         x1 = int(r.x)
@@ -208,9 +229,13 @@ def classify_specimen(specimen_id: int, payload: ClassifyRequest, db: Session = 
 
         pred = _predict_tensor(crop)
         gram = map_predictions_to_db(pred["prediction"])
+        cnn_inference_ms = float(pred.get("inference_ms", 0.0))
+        cnn_total_inference_ms += cnn_inference_ms
+        cnn_inference_per_roi_ms.append(cnn_inference_ms)
 
         row = Classification(
             patient_id=specimen.patient_id,
+            specimen_id=specimen.id,
             image_file_name=crop_filename,
             image_path=crop_path,
             classified_by_model_id=model_id,
@@ -223,6 +248,9 @@ def classify_specimen(specimen_id: int, payload: ClassifyRequest, db: Session = 
     db.add_all(db_rows)
     db.flush()
 
+    total_pos = sum(1 for row in db_rows if row.classification_gram == "Positif")
+    total_neg = sum(1 for row in db_rows if row.classification_gram == "Negatif")
+
     for i, row in enumerate(db_rows):
         roi = payload.rois[i]
         image_url = f"/static/crops/{specimen.id}/{row.image_file_name}"
@@ -232,22 +260,41 @@ def classify_specimen(specimen_id: int, payload: ClassifyRequest, db: Session = 
                 "bbox": [roi.x, roi.y, roi.x + roi.width, roi.y + roi.height],
                 "classification_gram": row.classification_gram,
                 "classification_confidence": float(row.confidence_score),
+                "cnn_inference_ms": round(cnn_inference_per_roi_ms[i], 2),
                 "image_file_name": image_url,
                 "source": roi.source,
             }
         )
 
     specimen.total_detected = len(db_rows)
+    specimen.status = STATUS_WAITING_VALIDATION
     db.add(specimen)
     db.commit()
+
+    # Setelah klasifikasi selesai dan masuk antrean dokter, hapus file asli specimen
+    _cleanup_original_specimen_file(specimen.file_path, specimen.id)
+
+    logger.info(
+        "[CLASSIFY] done specimen_id=%s total_saved=%s gram_positif=%s gram_negatif=%s status=%s cnn_total_inference_ms=%.2f cnn_avg_inference_ms=%.2f",
+        specimen.id,
+        len(db_rows),
+        total_pos,
+        total_neg,
+        specimen.status,
+        cnn_total_inference_ms,
+        (cnn_total_inference_ms / len(db_rows)) if db_rows else 0.0,
+    )
+    logger.debug("[CLASSIFY] results specimen_id=%s data=%s", specimen.id, response_rows)
 
     return {
         "specimen_id": specimen.id,
         "total_classified": len(response_rows),
+        "cnn_total_inference_ms": round(cnn_total_inference_ms, 2),
+        "cnn_avg_inference_ms": round((cnn_total_inference_ms / len(response_rows)) if response_rows else 0.0, 2),
         "results": response_rows,
     }
 
-@router.post("/process-specimen", response_model=AnalysisProcessResponse)
+@router.post("/process-specimen", response_model=AnalysisProcessResponse, deprecated=True)
 def process_specimen_automated(
     request: Request,
     patient_id: int = Form(...),
@@ -255,6 +302,11 @@ def process_specimen_automated(
     manual_rois: Optional[str] = Form(None),
     db: Session = Depends(get_db)
 ):
+    raise HTTPException(
+        status_code=410,
+        detail="Endpoint /api/analyst/process-specimen sudah deprecated. Gunakan /api/analyst/detect/{specimen_id} lalu /api/analyst/classify/{specimen_id}.",
+    )
+
     from app.ai_pipeline import detect_and_crop
     from app.main import _predict_tensor, MODEL_LOADED, MODEL_LOAD_ERROR
     from PIL import Image
@@ -384,8 +436,12 @@ def process_specimen_automated(
 
         # Simpan total objek terdeteksi ke tabel spesimen
         db_specimen.total_detected = len(db_classifications)
+        db_specimen.status = STATUS_WAITING_VALIDATION
         db.add(db_specimen)
         db.commit()
+
+        # Setelah klasifikasi selesai dan masuk antrean dokter, hapus file asli specimen
+        _cleanup_original_specimen_file(db_specimen.file_path, db_specimen.id)
         
     return AnalysisProcessResponse(
         specimen_id=db_specimen.id,
@@ -393,6 +449,7 @@ def process_specimen_automated(
         results=response_crops,
         message=f"Berhasil mendeteksi {len(crops_data)} bakteri dan dikirim ke sistem klasifikasi."
     )
+
 
 @router.get("/report", response_model=PaginatedResponse[AnalysisReportResponse])
 def get_analysis_report(
@@ -435,20 +492,21 @@ def get_analysis_report(
     for spec in paginated_specimens:
         # Hitung detail jumlah gram positif dan negatif
         classifications = db.query(Classification).filter(Classification.specimen_id == spec.id).all()
+
+        # Backward compatibility untuk data lama (sebelum specimen_id diset)
+        if not classifications:
+            classifications = db.query(Classification).filter(
+                Classification.image_path.like(f"%{os.path.join('crops', str(spec.id))}%")
+            ).all()
         
         total = len(classifications)
-        positive = sum(1 for c in classifications if c.classification_gram == "Positif")
-        negative = sum(1 for c in classifications if c.classification_gram == "Negatif")
+        positive = sum(1 for c in classifications if _effective_gram_label(c) == "Positif")
+        negative = sum(1 for c in classifications if _effective_gram_label(c) == "Negatif")
         
         # Logika Status Validasi
         validated = sum(1 for c in classifications if c.validation_gram is not None)
         
-        if total == 0:
-            status = "Menunggu sampel"
-        elif validated == total:
-            status = "sudah validasi"
-        else:
-            status = "menunggu validasi"
+        status = _status_label_from_specimen(getattr(spec, "status", None), total, validated)
             
         results.append(AnalysisReportResponse(
             created_at=spec.uploaded_at,
@@ -463,3 +521,49 @@ def get_analysis_report(
         ))
         
     return PaginatedResponse(data=results, meta=pagination_meta)
+
+
+@router.get("/history")
+def get_analysis_history(db: Session = Depends(get_db)):
+    rows = (
+        db.query(Specimen, Patient)
+        .join(Patient, Patient.id == Specimen.patient_id)
+        .order_by(Specimen.uploaded_at.desc())
+        .all()
+    )
+
+    history_list = []
+    for spec, patient in rows:
+        classifications = db.query(Classification).filter(Classification.specimen_id == spec.id).all()
+
+        # Backward compatibility untuk data lama (sebelum specimen_id diset)
+        if not classifications:
+            legacy_rows = db.query(Classification).filter(
+                Classification.image_path.like(f"%{os.path.join('crops', str(spec.id))}%")
+            ).all()
+            if legacy_rows:
+                classifications = legacy_rows
+
+        total_g_positif = sum(1 for c in classifications if _effective_gram_label(c) == "Positif")
+        total_g_negatif = sum(1 for c in classifications if _effective_gram_label(c) == "Negatif")
+        total_klasifikasi = len(classifications)
+        belum_validasi = sum(1 for c in classifications if c.validation_gram is None)
+
+        status = _status_label_from_specimen(
+            spec.status,
+            total_klasifikasi,
+            total_klasifikasi - belum_validasi,
+        )
+
+        history_list.append(
+            {
+                "id_specimen": spec.id,
+                "nama_pasien": patient.nama_lengkap,
+                "tanggal": spec.uploaded_at.strftime("%Y-%m-%d %H:%M") if spec.uploaded_at else None,
+                "total_g_positif": total_g_positif,
+                "total_g_negatif": total_g_negatif,
+                "status": status,
+            }
+        )
+
+    return history_list

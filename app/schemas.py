@@ -28,6 +28,8 @@ class PatientBase(BaseModel):
     tanggal_lahir: date
     alamat: Optional[str] = None
     no_telepon: Optional[str] = None
+    patient_date: Optional[datetime] = None
+    date: Optional[datetime] = None
 
 class PatientCreate(PatientBase):
     pass
