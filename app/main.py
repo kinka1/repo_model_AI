@@ -19,13 +19,16 @@ load_dotenv()
 
 from app.database import engine, get_db
 import app.models as db_models
-from app.routers import patients, analysis, dokter
+from app.routers import patients, analysis, dokter, admin
 from app.model_architectures import (
     SimpleCNN, 
+    GramEfficientNetB0Classifier,
+    GramEfficientNetB3Classifier,
     GramResNet50Classifier, 
     GramResNet101Classifier,
     GramVGG16Classifier,
-    GramVGG19Classifier
+    GramVGG19Classifier,
+    GramDenseNet121Classifier,
 )
 
 app = FastAPI(
@@ -37,6 +40,7 @@ app = FastAPI(
 app.include_router(patients.router)
 app.include_router(analysis.router)
 app.include_router(dokter.router)
+app.include_router(admin.router)
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL_PATH = ROOT_DIR / "models" / "best_model_cnn.pth"
@@ -96,6 +100,30 @@ MODEL_REGISTRY = {
         "metrics_path": ROOT_DIR / "experiments" / "scenario_5b_vgg19" / "metrics_summary.json",
         "scenario": "Scenario 5b: VGG19 fine-tuned",
         "architecture": "VGG19",
+    },
+    "densenet121": {
+        "name": "DenseNet121 (Transfer Learning + Fine-tuning)",
+        "class": GramDenseNet121Classifier,
+        "path": ROOT_DIR / "models" / "best_model_densenet121.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_densenet121.json",
+        "scenario": "Scenario 6: DenseNet121 two-phase fine-tuning",
+        "architecture": "DenseNet121",
+    },
+    "efficientnet_b0": {
+        "name": "EfficientNet-B0 (Transfer Learning + Fine-tuning)",
+        "class": GramEfficientNetB0Classifier,
+        "path": ROOT_DIR / "models" / "best_model_efficientnet_b0.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_efficientnet_b0.json",
+        "scenario": "Scenario 3c: EfficientNet-B0",
+        "architecture": "EfficientNet-B0",
+    },
+    "efficientnet_b3": {
+        "name": "EfficientNet-B3 (Transfer Learning + Fine-tuning)",
+        "class": GramEfficientNetB3Classifier,
+        "path": ROOT_DIR / "models" / "best_model_efficientnet_b3.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_efficientnet_b3.json",
+        "scenario": "Scenario 3d: EfficientNet-B3",
+        "architecture": "EfficientNet-B3",
     },
 }
 

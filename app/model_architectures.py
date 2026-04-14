@@ -1,20 +1,12 @@
-"""
-Model Architecture Definitions for Gram Bacteria Classification
-
-This module contains all neural network architectures used across different
-experimental scenarios for classifying Gram-positive and Gram-negative bacteria.
-
-Available Models:
-1. SimpleCNN - Custom CNN trained from scratch (Scenarios 1 & 2)
-2. GramResNet50Classifier - ResNet50 with transfer learning (Scenario 4a)
-3. GramResNet101Classifier - ResNet101 with transfer learning (Scenario 4b)
-4. GramVGG16Classifier - VGG16 with transfer learning (Scenario 5a)
-5. GramVGG19Classifier - VGG19 with transfer learning (Scenario 5b)
-"""
 
 import torch
 import torch.nn as nn
 from torchvision import models
+
+try:
+    from efficientnet_pytorch import EfficientNet
+except ImportError:
+    EfficientNet = None
 
 
 class SimpleCNN(nn.Module):
@@ -33,13 +25,7 @@ class SimpleCNN(nn.Module):
     """
     
     def __init__(self, num_classes: int = 2, dropout_p: float = 0.5):
-        """
-        Initialize SimpleCNN model.
-        
-        Args:
-            num_classes (int): Number of output classes (default: 2)
-            dropout_p (float): Dropout probability (default: 0.5)
-        """
+
         super(SimpleCNN, self).__init__()
         
         # Feature extraction layers
@@ -64,7 +50,7 @@ class SimpleCNN(nn.Module):
             
             # Block 4: 128 → 256 channels
             nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding=1),
-            nn.BatchNorm2d(256),
+            nn.BatchNorm2d(256), 
             nn.ReLU(inplace=True),
             nn.MaxPool2d(kernel_size=2, stride=2),  # 28 → 14
             
@@ -346,6 +332,89 @@ class GramVGG19Classifier(nn.Module):
         return self.backbone(x)
 
 
+class GramDenseNet121Classifier(nn.Module):
+    """
+    DenseNet121-based classifier for Gram bacteria classification.
+
+    Architecture:
+    - Backbone: DenseNet121
+    - Custom classifier: 1024 -> 512 -> 2
+    - Output: 2 classes (Gram Negative, Gram Positive)
+    """
+
+    def __init__(self, num_classes: int = 2, pretrained: bool = False) -> None:
+        super().__init__()
+        weights = models.DenseNet121_Weights.IMAGENET1K_V1 if pretrained else None
+        self.backbone = models.densenet121(weights=weights)
+        in_features = self.backbone.classifier.in_features
+        self.backbone.classifier = nn.Sequential(
+            nn.Dropout(p=0.5),
+            nn.Linear(in_features, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=0.3),
+            nn.Linear(512, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.backbone(x)
+
+
+class GramEfficientNetB0Classifier(nn.Module):
+    """
+    EfficientNet-B0-based classifier for Gram bacteria classification.
+    """
+
+    def __init__(self, num_classes: int = 2, pretrained: bool = False) -> None:
+        super().__init__()
+        if EfficientNet is None:
+            raise ImportError("efficientnet_pytorch is required for GramEfficientNetB0Classifier")
+
+        self.backbone = (
+            EfficientNet.from_pretrained("efficientnet-b0")
+            if pretrained
+            else EfficientNet.from_name("efficientnet-b0")
+        )
+        in_features = self.backbone._fc.in_features
+        self.backbone._fc = nn.Sequential(
+            nn.Dropout(p=0.5),
+            nn.Linear(in_features, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=0.3),
+            nn.Linear(512, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.backbone(x)
+
+
+class GramEfficientNetB3Classifier(nn.Module):
+    """
+    EfficientNet-B3-based classifier for Gram bacteria classification.
+    """
+
+    def __init__(self, num_classes: int = 2, pretrained: bool = False) -> None:
+        super().__init__()
+        if EfficientNet is None:
+            raise ImportError("efficientnet_pytorch is required for GramEfficientNetB3Classifier")
+
+        self.backbone = (
+            EfficientNet.from_pretrained("efficientnet-b3")
+            if pretrained
+            else EfficientNet.from_name("efficientnet-b3")
+        )
+        in_features = self.backbone._fc.in_features
+        self.backbone._fc = nn.Sequential(
+            nn.Dropout(p=0.5),
+            nn.Linear(in_features, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=0.3),
+            nn.Linear(512, num_classes),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.backbone(x)
+
+
 # Model metadata for external reference
 MODEL_INFO = {
     "SimpleCNN": {
@@ -372,5 +441,20 @@ MODEL_INFO = {
         "parameters": 139611210,
         "architecture": "VGG19 + Custom Head",
         "description": "Transfer learning with VGG19"
+    },
+    "GramDenseNet121Classifier": {
+        "parameters": 7713410,
+        "architecture": "DenseNet121 + Custom Head",
+        "description": "Transfer learning with DenseNet121"
+    },
+    "GramEfficientNetB0Classifier": {
+        "parameters": 5288546,
+        "architecture": "EfficientNet-B0 + Custom Head",
+        "description": "Transfer learning with EfficientNet-B0"
+    },
+    "GramEfficientNetB3Classifier": {
+        "parameters": 12398130,
+        "architecture": "EfficientNet-B3 + Custom Head",
+        "description": "Transfer learning with EfficientNet-B3"
     }
 }

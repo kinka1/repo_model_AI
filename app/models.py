@@ -65,6 +65,7 @@ class AIModel(Base):
     precision_score = Column(Numeric(5, 4), nullable=True)
     recall_score = Column(Numeric(5, 4), nullable=True)
     f1_score = Column(Numeric(5, 4), nullable=True)
+    inference_time_s = Column(Float, nullable=True)
     is_active = Column(Boolean, default=False, index=True)
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -84,6 +85,17 @@ class ModelTrainingStatus(Base):
     current_epoch = Column(Integer, nullable=True)
     total_epochs = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ModelRetrainConfig(Base):
+    __tablename__ = "model_retrain_config"
+
+    id = Column(Integer, primary_key=True, index=True)
+    auto_retrain_enabled = Column(Boolean, default=False, nullable=False)
+    trigger_count = Column(Integer, default=500, nullable=False)
+    validated_data_since_last_train = Column(Integer, default=0, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class Patient(Base):
     __tablename__ = "patients"

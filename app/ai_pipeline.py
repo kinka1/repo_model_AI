@@ -12,7 +12,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Default YOLO Model Path provided by the user
 # Normally placed in env vars, but hardcoded as per the user's specific workflow path
-YOLO_MODEL_PATH = Path(r".\models\bacteria_yolo_model.pt")
+YOLO_MODEL_PATH = Path(os.environ.get("YOLO_MODEL_PATH", r".\models\best_yolo.pt"))
 
 YOLO_MODEL = None
 YOLO_LOADED = False
@@ -20,7 +20,7 @@ YOLO_LOAD_ERROR = ""
 
 def load_yolo_model() -> None:
     global YOLO_MODEL, YOLO_LOADED, YOLO_LOAD_ERROR
-    
+    print(YOLO_MODEL_PATH)
     if YOLO is None:
         YOLO_LOAD_ERROR = "Library ultralytics tidak terinstall. Jalankan `pip install ultralytics`"
         print(f"Error: {YOLO_LOAD_ERROR}")
@@ -55,7 +55,7 @@ def detect_and_crop(image: Image.Image, conf_threshold: float = 0.25):
     img_rgb = image.convert("RGB")
     
     # Menjalankan inference
-    results = YOLO_MODEL(img_rgb, conf=conf_threshold)
+    results = YOLO_MODEL(img_rgb, conf=conf_threshold, verbose=False)
     
     # Karena input list cuma 1 (image), result is at index 0
     result = results[0]

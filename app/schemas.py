@@ -102,6 +102,102 @@ class AnalysisProcessResponse(BaseModel):
     message: str
 
 # ===============================
+# USER MANAGEMENT SCHEMAS
+# ===============================
+
+
+class UserBaseSchema(BaseModel):
+    full_name: str
+    username: str
+    email: str
+    role: str
+    is_active: bool = True
+
+
+class UserCreateRequest(UserBaseSchema):
+    password: str = Field(..., min_length=6)
+
+
+class UserUpdateRequest(BaseModel):
+    full_name: Optional[str] = None
+    username: Optional[str] = None
+    email: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+    password: Optional[str] = Field(None, min_length=6)
+
+
+class UserResponseSchema(BaseModel):
+    id: int
+    full_name: str
+    username: str
+    email: str
+    role: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RoleListResponse(BaseModel):
+    roles: List[str]
+
+# ===============================
+# MODEL MANAGEMENT SCHEMAS
+# ===============================
+
+
+class AIModelSummaryResponse(BaseModel):
+    id: int
+    model_name: str
+    task_type: str
+    version: str
+    accuracy: Optional[float] = None
+    f1_score: Optional[float] = None
+    inference_time_s: Optional[float] = None
+    status: str
+    is_active: bool
+    is_recommended: bool
+    delta_acc: Optional[float] = None
+    delta_f1: Optional[float] = None
+    delta_time: Optional[float] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ActiveModelResponse(BaseModel):
+    task_type: str
+    model: Optional[AIModelSummaryResponse] = None
+
+
+class BestModelResponse(BaseModel):
+    task_type: str
+    model: Optional[AIModelSummaryResponse] = None
+
+
+class RetrainConfigResponse(BaseModel):
+    auto_retrain_enabled: bool
+    trigger_count: int
+    validated_data_since_last_train: int
+
+
+class RetrainConfigUpdateRequest(BaseModel):
+    auto_retrain_enabled: Optional[bool] = None
+    trigger_count: Optional[int] = Field(None, ge=1)
+
+
+class TrainingJobResponse(BaseModel):
+    job_id: int
+    model_id: Optional[int]
+    status: str
+    progress_percent: Optional[float] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    logs_summary: Optional[str] = None
+
+# ===============================
 # REPORT SCHEMAS
 # ===============================
 
