@@ -1,4 +1,13 @@
 import hashlib
+import json
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -20,6 +29,9 @@ from app.schemas import (
     PaginatedResponse,
     RetrainConfigResponse,
     RetrainConfigUpdateRequest,
+    RetrainModelOptionResponse,
+    RetrainStartRequest,
+    RetrainStartResponse,
     RoleListResponse,
     TrainingJobResponse,
     UserCreateRequest,
@@ -32,6 +44,58 @@ from app.utils import paginate_query
 router = APIRouter(prefix="/api/admin", tags=["Admin Management"])
 
 VALID_ROLES = ["Admin", "Analis", "Dokter"]
+ROOT_DIR = Path(__file__).resolve().parents[2]
+TRAINING_DATA_DIR = ROOT_DIR / "data" / "retrain"
+TRAINING_DATA_TRAIN = TRAINING_DATA_DIR / "train"
+TRAINING_DATA_VAL = TRAINING_DATA_DIR / "val"
+DEFAULT_BASE_DATA_DIR = ROOT_DIR / "data" / "processed"
+MODEL_PATH_BY_KEY = {
+    "resnet50": ROOT_DIR / "models" / "best_model_resnet50.pth",
+    "resnet101": ROOT_DIR / "models" / "best_model_resnet101.pth",
+    "efficientnet_b0": ROOT_DIR / "models" / "best_model_efficientnet_b0.pth",
+    "efficientnet_b3": ROOT_DIR / "models" / "best_model_efficientnet_b3.pth",
+    "densenet121": ROOT_DIR / "models" / "best_model_densenet121.pth",
+}
+METRICS_PATH_BY_KEY = {
+    "resnet50": ROOT_DIR / "models" / "metrics_resnet50.json",
+    "resnet101": ROOT_DIR / "models" / "metrics_resnet101.json",
+    "efficientnet_b0": ROOT_DIR / "models" / "metrics_efficientnet_b0.json",
+    "efficientnet_b3": ROOT_DIR / "models" / "metrics_efficientnet_b3.json",
+    "densenet121": ROOT_DIR / "models" / "metrics_densenet121.json",
+}
+
+MODEL_SCRIPT_MAP = {
+    "resnet50": {
+        "script": ROOT_DIR / "train_resnet50_finetune.py",
+        "model_path": MODEL_PATH_BY_KEY["resnet50"],
+        "metrics_path": METRICS_PATH_BY_KEY["resnet50"],
+        "name_prefix": "retrain_resnet50",
+    },
+    "resnet101": {
+        "script": ROOT_DIR / "train_resnet101_finetune.py",
+        "model_path": MODEL_PATH_BY_KEY["resnet101"],
+        "metrics_path": METRICS_PATH_BY_KEY["resnet101"],
+        "name_prefix": "retrain_resnet101",
+    },
+    "efficientnet_b0": {
+        "script": ROOT_DIR / "train_efficientnet_b0_finetune.py",
+        "model_path": MODEL_PATH_BY_KEY["efficientnet_b0"],
+        "metrics_path": METRICS_PATH_BY_KEY["efficientnet_b0"],
+        "name_prefix": "retrain_efficientnet_b0",
+    },
+    "efficientnet_b3": {
+        "script": ROOT_DIR / "train_efficientnet_b3_finetune.py",
+        "model_path": MODEL_PATH_BY_KEY["efficientnet_b3"],
+        "metrics_path": METRICS_PATH_BY_KEY["efficientnet_b3"],
+        "name_prefix": "retrain_efficientnet_b3",
+    },
+    "densenet121": {
+        "script": ROOT_DIR / "train_densenet121_finetune.py",
+        "model_path": MODEL_PATH_BY_KEY["densenet121"],
+        "metrics_path": METRICS_PATH_BY_KEY["densenet121"],
+        "name_prefix": "retrain_densenet121",
+    },
+}
 
 
 def _hash_password(password: str) -> str:
@@ -99,6 +163,253 @@ def _recommended_per_task(db: Session) -> Dict[str, int]:
 def _active_per_task(db: Session) -> Dict[str, AIModel]:
     rows = db.query(AIModel).filter(AIModel.is_active.is_(True)).all()
     return {row.model_type: row for row in rows}
+
+
+def _ensure_training_dirs() -> None:
+    for split in (TRAINING_DATA_TRAIN, TRAINING_DATA_VAL):
+        for cls in ("gram_negative", "gram_positive"):
+            (split / cls).mkdir(parents=True, exist_ok=True)
+
+
+def _clear_training_dirs() -> None:
+    if TRAINING_DATA_DIR.exists():
+        shutil.rmtree(TRAINING_DATA_DIR)
+    _ensure_training_dirs()
+
+
+def _copy_dir_images(src_dir: Path, dst_dir: Path) -> int:
+    if not src_dir.exists():
+        return 0
+    copied = 0
+    for cls in ("gram_negative", "gram_positive"):
+        src_cls = src_dir / cls
+        dst_cls = dst_dir / cls
+        dst_cls.mkdir(parents=True, exist_ok=True)
+        if not src_cls.exists():
+            continue
+        for file_path in src_cls.iterdir():
+            if file_path.is_file():
+                target = dst_cls / file_path.name
+                if target.exists():
+                    target = dst_cls / f"base_{int(time.time() * 1000)}_{file_path.name}"
+                shutil.copy2(file_path, target)
+                copied += 1
+    return copied
+
+
+def _label_to_class_dir(gram_label: Optional[str]) -> Optional[str]:
+    if not gram_label:
+        return None
+    if gram_label == "Positif":
+        return "gram_positive"
+    if gram_label == "Negatif":
+        return "gram_negative"
+    return None
+
+
+def _build_retrain_dataset_from_db(db: Session, val_ratio: float = 0.2) -> Dict[str, int]:
+    _clear_training_dirs()
+
+    base_train = _copy_dir_images(DEFAULT_BASE_DATA_DIR / "train", TRAINING_DATA_TRAIN)
+    base_val = _copy_dir_images(DEFAULT_BASE_DATA_DIR / "val", TRAINING_DATA_VAL)
+
+    rows = (
+        db.query(Classification)
+        .filter(Classification.validation_gram.isnot(None))
+        .order_by(Classification.id.asc())
+        .all()
+    )
+
+    added_train = 0
+    added_val = 0
+    for idx, row in enumerate(rows, start=1):
+        cls_name = _label_to_class_dir(row.validation_gram)
+        if not cls_name:
+            continue
+        if not row.image_path:
+            continue
+
+        src = Path(row.image_path)
+        if not src.is_absolute():
+            src = (ROOT_DIR / row.image_path).resolve()
+        if not src.exists() or not src.is_file():
+            continue
+
+        use_val = (idx % 100) < int(val_ratio * 100)
+        split_dir = TRAINING_DATA_VAL if use_val else TRAINING_DATA_TRAIN
+        dst_dir = split_dir / cls_name
+        dst_dir.mkdir(parents=True, exist_ok=True)
+
+        stem = src.stem
+        suffix = src.suffix or ".jpg"
+        dst = dst_dir / f"crop_{row.id}_{stem}{suffix}"
+        try:
+            shutil.copy2(src, dst)
+            if use_val:
+                added_val += 1
+            else:
+                added_train += 1
+        except Exception:
+            continue
+
+    return {
+        "base_train": base_train,
+        "base_val": base_val,
+        "crop_train": added_train,
+        "crop_val": added_val,
+        "total_train": base_train + added_train,
+        "total_val": base_val + added_val,
+    }
+
+
+def _resolve_training_script(model: AIModel) -> Dict[str, Path]:
+    key = (model.model_name or "").strip().lower()
+    if "resnet50" in key:
+        return MODEL_SCRIPT_MAP["resnet50"]
+    if "resnet101" in key:
+        return MODEL_SCRIPT_MAP["resnet101"]
+    if "efficientnet-b0" in key or "efficientnet_b0" in key:
+        return MODEL_SCRIPT_MAP["efficientnet_b0"]
+    if "efficientnet-b3" in key or "efficientnet_b3" in key:
+        return MODEL_SCRIPT_MAP["efficientnet_b3"]
+    if "densenet121" in key or "dense net121" in key:
+        return MODEL_SCRIPT_MAP["densenet121"]
+    raise HTTPException(
+        status_code=400,
+        detail="Retrain saat ini mendukung ResNet50, ResNet101, EfficientNet-B0, EfficientNet-B3, dan DenseNet121",
+    )
+
+
+def _supports_retrain(model: AIModel) -> bool:
+    key = (model.model_name or "").strip().lower()
+    return (
+        ("resnet50" in key)
+        or ("resnet101" in key)
+        or ("efficientnet-b0" in key)
+        or ("efficientnet_b0" in key)
+        or ("efficientnet-b3" in key)
+        or ("efficientnet_b3" in key)
+        or ("densenet121" in key)
+    )
+
+
+def _run_training_job(
+    job_id: int,
+    script: Path,
+    model_output: Path,
+    metrics_output: Path,
+    name_prefix: str,
+    epochs_head: int,
+    epochs_ft: int,
+    batch_size: int,
+) -> None:
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        def _save_job_state() -> None:
+            try:
+                db.add(job)
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+
+        job = db.query(ModelTrainingStatus).filter(ModelTrainingStatus.id == job_id).first()
+        if not job:
+            return
+
+        cmd = [
+            sys.executable,
+            "-u",
+            str(script),
+            "--data",
+            str(TRAINING_DATA_DIR),
+            "--epochs-head",
+            str(epochs_head),
+            "--epochs-ft",
+            str(epochs_ft),
+            "--batch-size",
+            str(batch_size),
+            "--save-model",
+            str(model_output),
+            "--save-metrics",
+            str(metrics_output),
+            "--name",
+            f"{name_prefix}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}",
+        ]
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(ROOT_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+        )
+
+        logs: List[str] = []
+        total_epochs = max(1, epochs_head + epochs_ft)
+        if job.total_epochs is None:
+            job.total_epochs = total_epochs
+        job.progress = max(float(job.progress or 0.0), 1.0)
+        _save_job_state()
+
+        last_flush = time.time()
+
+        if proc.stdout:
+            for line in proc.stdout:
+                text_line = line.strip()
+                if text_line:
+                    logs.append(text_line)
+                    if len(logs) > 40:
+                        logs = logs[-40:]
+
+                epoch_match = re.search(r"['\"]?epoch['\"]?\s*:\s*(\d+)", text_line)
+                if epoch_match:
+                    parsed_epoch = int(epoch_match.group(1))
+                    if parsed_epoch > 0:
+                        job.current_epoch = min(parsed_epoch, total_epochs)
+                    else:
+                        job.current_epoch = min((job.current_epoch or 0) + 1, total_epochs)
+                    job.progress = min(99.0, (job.current_epoch / total_epochs) * 100.0)
+                    job.error_message = "\n".join(logs[-20:])
+                    _save_job_state()
+                    last_flush = time.time()
+                elif text_line and (time.time() - last_flush) >= 2.0:
+                    job.error_message = "\n".join(logs[-20:])
+                    _save_job_state()
+                    last_flush = time.time()
+
+        ret = proc.wait()
+
+        job.end_time = datetime.utcnow()
+        job.progress = 100.0
+
+        if ret == 0:
+            job.status = "COMPLETED"
+            job.error_message = "\n".join(logs[-20:]) if logs else "Training completed"
+        else:
+            job.status = "FAILED"
+            job.error_message = "\n".join(logs[-20:]) if logs else "Training failed"
+
+        _save_job_state()
+    except Exception as exc:
+        db.rollback()
+        job = db.query(ModelTrainingStatus).filter(ModelTrainingStatus.id == job_id).first()
+        if job:
+            try:
+                job.status = "FAILED"
+                job.end_time = datetime.utcnow()
+                job.error_message = f"Retrain exception: {exc}"
+                db.add(job)
+                db.commit()
+            except Exception:
+                db.rollback()
+        return
+    finally:
+        db.close()
 
 
 @router.get("/users", response_model=PaginatedResponse[UserResponseSchema])
@@ -380,3 +691,87 @@ def get_training_jobs(
         )
 
     return responses
+
+
+@router.post("/models/retrain", response_model=RetrainStartResponse)
+def start_retrain(payload: RetrainStartRequest, db: Session = Depends(get_db)):
+    model = db.query(AIModel).filter(AIModel.id == payload.model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model tidak ditemukan")
+
+    running_job = (
+        db.query(ModelTrainingStatus)
+        .filter(ModelTrainingStatus.status == "TRAINING")
+        .first()
+    )
+    if running_job:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Masih ada job training berjalan (job_id={running_job.id})",
+        )
+
+    script_conf = _resolve_training_script(model)
+
+    stats = _build_retrain_dataset_from_db(db, val_ratio=float(payload.val_ratio_crops or 0.2))
+    if stats["total_train"] == 0 or stats["total_val"] == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Dataset retrain kosong. Pastikan data awal tersedia dan/atau crop tervalidasi ada.",
+        )
+
+    job = ModelTrainingStatus(
+        model_id=model.id,
+        status="TRAINING",
+        progress=0.0,
+        start_time=datetime.utcnow(),
+        current_epoch=0,
+        total_epochs=int((payload.epochs_head or 10) + (payload.epochs_ft or 30)),
+        error_message=(
+            f"Dataset built: base_train={stats['base_train']}, base_val={stats['base_val']}, "
+            f"crop_train={stats['crop_train']}, crop_val={stats['crop_val']}"
+        ),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    thread = threading.Thread(
+        target=_run_training_job,
+        kwargs={
+            "job_id": job.id,
+            "script": script_conf["script"],
+            "model_output": script_conf["model_path"],
+            "metrics_output": script_conf["metrics_path"],
+            "name_prefix": script_conf["name_prefix"],
+            "epochs_head": int(payload.epochs_head or 10),
+            "epochs_ft": int(payload.epochs_ft or 30),
+            "batch_size": int(payload.batch_size or 32),
+        },
+        daemon=True,
+    )
+    thread.start()
+
+    return RetrainStartResponse(
+        job_id=job.id,
+        status=job.status,
+        message=(
+            f"Retrain dimulai untuk model_id={model.id}. "
+            f"Dataset train={stats['total_train']} | val={stats['total_val']}."
+        ),
+    )
+
+
+@router.get("/models/retrain/options", response_model=List[RetrainModelOptionResponse])
+def get_retrain_model_options(db: Session = Depends(get_db)):
+    models = db.query(AIModel).order_by(AIModel.created_at.desc()).all()
+    return [
+        RetrainModelOptionResponse(
+            id=m.id,
+            model_name=m.model_name,
+            version=m.version,
+            task_type=m.model_type,
+            is_active=bool(m.is_active),
+            supports_retrain=_supports_retrain(m),
+        )
+        for m in models
+    ]

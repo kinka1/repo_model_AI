@@ -19,7 +19,7 @@ load_dotenv()
 
 from app.database import engine, get_db
 import app.models as db_models
-from app.routers import patients, analysis, dokter, admin
+from app.routers import patients, analysis, dokter, admin, reports
 from app.model_architectures import (
     SimpleCNN, 
     GramEfficientNetB0Classifier,
@@ -41,6 +41,7 @@ app.include_router(patients.router)
 app.include_router(analysis.router)
 app.include_router(dokter.router)
 app.include_router(admin.router)
+app.include_router(reports.router)
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL_PATH = ROOT_DIR / "models" / "best_model_cnn.pth"

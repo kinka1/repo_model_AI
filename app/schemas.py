@@ -72,7 +72,6 @@ class BatchPredictResponse(BaseModel):
 
 class ClassificationSubmit(BaseModel):
     image_file_name: str
-    # Simpan hasil crop AI
     classification_gram: str
     classification_bentuk: Optional[str] = None
     confidence_score: float
@@ -80,7 +79,6 @@ class ClassificationSubmit(BaseModel):
 class AnalysisSessionSubmit(BaseModel):
     patient_id: int
     specimen_id: Optional[int] = None
-    # Array dari hasil crop
     crops: List[ClassificationSubmit]
 
 class AnalysisSessionResponse(BaseModel):
@@ -105,7 +103,6 @@ class AnalysisProcessResponse(BaseModel):
 # USER MANAGEMENT SCHEMAS
 # ===============================
 
-
 class UserBaseSchema(BaseModel):
     full_name: str
     username: str
@@ -113,10 +110,8 @@ class UserBaseSchema(BaseModel):
     role: str
     is_active: bool = True
 
-
 class UserCreateRequest(UserBaseSchema):
     password: str = Field(..., min_length=6)
-
 
 class UserUpdateRequest(BaseModel):
     full_name: Optional[str] = None
@@ -125,7 +120,6 @@ class UserUpdateRequest(BaseModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
     password: Optional[str] = Field(None, min_length=6)
-
 
 class UserResponseSchema(BaseModel):
     id: int
@@ -140,14 +134,12 @@ class UserResponseSchema(BaseModel):
     class Config:
         from_attributes = True
 
-
 class RoleListResponse(BaseModel):
     roles: List[str]
 
 # ===============================
 # MODEL MANAGEMENT SCHEMAS
 # ===============================
-
 
 class AIModelSummaryResponse(BaseModel):
     id: int
@@ -166,27 +158,22 @@ class AIModelSummaryResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-
 class ActiveModelResponse(BaseModel):
     task_type: str
     model: Optional[AIModelSummaryResponse] = None
 
-
 class BestModelResponse(BaseModel):
     task_type: str
     model: Optional[AIModelSummaryResponse] = None
-
 
 class RetrainConfigResponse(BaseModel):
     auto_retrain_enabled: bool
     trigger_count: int
     validated_data_since_last_train: int
 
-
 class RetrainConfigUpdateRequest(BaseModel):
     auto_retrain_enabled: Optional[bool] = None
     trigger_count: Optional[int] = Field(None, ge=1)
-
 
 class TrainingJobResponse(BaseModel):
     job_id: int
@@ -196,6 +183,29 @@ class TrainingJobResponse(BaseModel):
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
     logs_summary: Optional[str] = None
+
+
+class RetrainStartRequest(BaseModel):
+    model_id: int
+    epochs_head: Optional[int] = Field(10, ge=1, le=200)
+    epochs_ft: Optional[int] = Field(30, ge=1, le=400)
+    batch_size: Optional[int] = Field(32, ge=1, le=256)
+    val_ratio_crops: Optional[float] = Field(0.2, gt=0.0, lt=1.0)
+
+
+class RetrainStartResponse(BaseModel):
+    job_id: int
+    status: str
+    message: str
+
+
+class RetrainModelOptionResponse(BaseModel):
+    id: int
+    model_name: str
+    version: str
+    task_type: str
+    is_active: bool
+    supports_retrain: bool
 
 # ===============================
 # REPORT SCHEMAS
@@ -243,7 +253,7 @@ class PatientDetail(BaseModel):
     jenis_kelamin: str
 
 class ValidationTask(BaseModel):
-    id: int  # classification_id
+    id: int
     patient: PatientDetail
     image_url: str
     classification_gram: str
@@ -251,4 +261,41 @@ class ValidationTask(BaseModel):
     confidence_score: float
     kode_sample: str
 
+# ===============================
+# MEDICAL REPORT SCHEMAS
+# ===============================
 
+class ReportPatientData(BaseModel):
+    id_pasien: str
+    nama: str
+    tanggal_lahir: date
+    umur: int
+    jenis_kelamin: str
+
+class ReportClinicalData(BaseModel):
+    tanggal_sampel: datetime
+    jenis_spesimen: str = "Pewarnaan Gram"
+    analis: Optional[str] = "N/A"
+    dokter: Optional[str] = "N/A"
+
+class ReportResultSummary(BaseModel):
+    total_objek: int
+    gram_positif_kokus: int
+    gram_positif_batang: int
+    gram_negatif_kokus: int
+    gram_negatif_batang: int
+    kesimpulan: Optional[str] = None
+    catatan_dokter: Optional[str] = None
+
+class ReportEvidenceImage(BaseModel):
+    image_url: str
+    label: str
+
+class MedicalReportResponse(BaseModel):
+    id_laporan: str = Field(..., description="ID unik untuk laporan ini, biasanya sama dengan specimen_id")
+    tanggal_cetak: datetime
+    specimen_id: int
+    pasien: ReportPatientData
+    data_klinis: ReportClinicalData
+    ringkasan_hasil: ReportResultSummary
+    gambar_bukti: List[ReportEvidenceImage] = []

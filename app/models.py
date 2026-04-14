@@ -78,7 +78,8 @@ class ModelTrainingStatus(Base):
     model_id = Column(Integer, ForeignKey("ai_models.id", ondelete="CASCADE"), nullable=True, index=True)
     dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=True)
     status = Column(String(20), nullable=False, index=True) # 'TRAINING', 'COMPLETED', 'FAILED', 'IDLE'
-    progress = Column(Numeric(3, 2), default=0.0)
+    # Progress disimpan sebagai persentase 0.00 - 100.00
+    progress = Column(Numeric(5, 2), default=0.0)
     start_time = Column(DateTime, nullable=True)
     end_time = Column(DateTime, nullable=True)
     error_message = Column(Text, nullable=True)
