@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func, and_
 import time
@@ -6,26 +6,40 @@ from datetime import datetime
 
 from app.database import get_db
 from app.models import Patient, Specimen
-from app.schemas import PatientCreate, PatientResponse
-from typing import List
+from app.schemas import PatientCreate, PatientResponse, PatientUpdate, PaginatedResponse
+from app.utils import paginate_query
+from typing import Optional
 
 router = APIRouter(
     prefix="/api/patients",
     tags=["Patient Management"]
 )
 
+
+def require_admin(request: Request):
+    role = getattr(request.state, "role", None)
+    if role != "Admin":
+        raise HTTPException(status_code=403, detail="Hanya Admin yang boleh mengakses endpoint patient")
+
+
+def require_admin_or_analis(request: Request):
+    role = getattr(request.state, "role", None)
+    if role not in {"Admin", "Analis"}:
+        raise HTTPException(status_code=403, detail="Hanya Admin atau Analis yang boleh mengakses data patient")
+
 def generate_id_pasien():
     # Simple ID generation: PAS-Timestamp
     return f"PAS-{int(time.time()*1000)}"[:20]
 
-@router.get("", response_model=List[PatientResponse])
+@router.get("", response_model=PaginatedResponse[PatientResponse])
 def get_patients(
-    skip: int = 0, 
-    limit: int = 100, 
-    search: str = Query(None, description="Search by name or id_pasien"),
-    specimen_status: str = Query(None, description="Filter by latest specimen status, e.g. pending/waiting_validation/validated"),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1, le=100),
+    search: Optional[str] = Query(None, description="Search by name or id_pasien"),
+    specimen_status: Optional[str] = Query(None, description="Filter by latest specimen status, e.g. pending/waiting_validation/validated"),
     include_no_specimen: bool = Query(True, description="When filtering by specimen_status, include patients without specimen"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    _role=Depends(require_admin_or_analis),
 ):
     query = db.query(Patient)
     if search:
@@ -73,11 +87,16 @@ def get_patients(
         else:
             query = query.filter(latest_status_subq.c.latest_status == specimen_status)
 
-    patients = query.order_by(Patient.patient_date.desc(), Patient.created_at.desc()).offset(skip).limit(limit).all()
-    return patients
+    query = query.order_by(Patient.patient_date.desc(), Patient.created_at.desc())
+    patients, meta = paginate_query(query, page, per_page)
+    return PaginatedResponse[PatientResponse](data=patients, meta=meta)
 
 @router.post("", response_model=PatientResponse, status_code=201)
-def create_patient(patient: PatientCreate, db: Session = Depends(get_db)):
+def create_patient(
+    patient: PatientCreate,
+    db: Session = Depends(get_db),
+    _admin=Depends(require_admin),
+):
     if patient.jenis_kelamin not in ['Laki-Laki', 'Perempuan']:
         raise HTTPException(status_code=400, detail="jenis_kelamin harus 'Laki-Laki' atau 'Perempuan'")
         
@@ -94,3 +113,47 @@ def create_patient(patient: PatientCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_patient)
     return db_patient
+
+
+@router.put("/{patient_id}", response_model=PatientResponse)
+def update_patient(
+    patient_id: int,
+    payload: PatientUpdate,
+    db: Session = Depends(get_db),
+    _admin=Depends(require_admin),
+):
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Pasien tidak ditemukan")
+
+    if payload.jenis_kelamin is not None and payload.jenis_kelamin not in ["Laki-Laki", "Perempuan"]:
+        raise HTTPException(status_code=400, detail="jenis_kelamin harus 'Laki-Laki' atau 'Perempuan'")
+
+    update_data = payload.model_dump(exclude_unset=True)
+
+    if "date" in update_data and "patient_date" not in update_data:
+        update_data["patient_date"] = update_data["date"]
+
+    for key, value in update_data.items():
+        if key == "date":
+            continue
+        setattr(patient, key, value)
+
+    db.add(patient)
+    db.commit()
+    db.refresh(patient)
+    return patient
+
+
+@router.delete("/{patient_id}", status_code=204)
+def delete_patient(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    _admin=Depends(require_admin),
+):
+    patient = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Pasien tidak ditemukan")
+
+    db.delete(patient)
+    db.commit()

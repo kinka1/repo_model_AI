@@ -1,5 +1,7 @@
-from fastapi import FastAPI, File, HTTPException, UploadFile, Query, Response
+from fastapi import FastAPI, File, HTTPException, UploadFile, Query, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.openapi.utils import get_openapi
 from typing import List
 from typing import Optional
 from pathlib import Path
@@ -8,6 +10,8 @@ import io
 import json
 import os
 import time
+import hashlib
+from datetime import datetime
 
 import torch
 import torch.nn as nn
@@ -17,9 +21,9 @@ import uvicorn
 from dotenv import load_dotenv
 load_dotenv()
 
-from app.database import engine, get_db
+from app.database import engine, get_db, SessionLocal
 import app.models as db_models
-from app.routers import patients, analysis, dokter, admin, reports
+from app.routers import patients, analysis, dokter, admin, reports, auth
 from app.model_architectures import (
     SimpleCNN, 
     GramEfficientNetB0Classifier,
@@ -37,11 +41,133 @@ app = FastAPI(
     version="1.0.0",
 )
 
+AUTH_EXEMPT_PATHS = {
+    "/",
+    "/health",
+    "/openapi.json",
+    "/docs",
+    "/redoc",
+    "/api/auth/login",
+    "/api/auth/forgot-password",
+    "/api/auth/reset-password",
+}
+
+
+def _is_auth_exempt(path: str) -> bool:
+    if path in AUTH_EXEMPT_PATHS:
+        return True
+    if path.startswith("/docs") or path.startswith("/redoc"):
+        return True
+    if path.startswith("/static/"):
+        return True
+    return False
+
+
+@app.middleware("http")
+async def access_token_middleware(request: Request, call_next):
+    path = request.url.path
+
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    # Hanya proteksi endpoint API; non-API (health/docs) tetap terbuka.
+    if not path.startswith("/api/"):
+        return await call_next(request)
+
+    if _is_auth_exempt(path):
+        return await call_next(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.lower().startswith("bearer "):
+        return JSONResponse(status_code=401, content={"detail": "Authorization Bearer token dibutuhkan"})
+
+    raw_token = auth_header[7:].strip()
+    if not raw_token:
+        return JSONResponse(status_code=401, content={"detail": "Access token kosong"})
+
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+    db = SessionLocal()
+    try:
+        session = (
+            db.query(db_models.Session)
+            .filter(
+                db_models.Session.token_hash == token_hash,
+                db_models.Session.is_revoked.is_(False),
+            )
+            .first()
+        )
+
+        if not session:
+            return JSONResponse(status_code=401, content={"detail": "Token tidak valid"})
+
+        if session.expires_at < datetime.utcnow():
+            session.is_revoked = True
+            db.add(session)
+            db.commit()
+            return JSONResponse(status_code=401, content={"detail": "Token sudah expired"})
+
+        user = db.query(db_models.User).filter(db_models.User.id == session.user_id).first()
+        if not user:
+            return JSONResponse(status_code=401, content={"detail": "User tidak ditemukan"})
+        if not user.is_active:
+            return JSONResponse(status_code=403, content={"detail": "User nonaktif"})
+
+        request.state.user_id = user.id
+        request.state.username = user.username
+        request.state.role = user.role
+    finally:
+        db.close()
+
+    return await call_next(request)
+
 app.include_router(patients.router)
 app.include_router(analysis.router)
 app.include_router(dokter.router)
 app.include_router(admin.router)
 app.include_router(reports.router)
+app.include_router(auth.router)
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    openapi_schema.setdefault("components", {})
+    openapi_schema["components"].setdefault("securitySchemes", {})
+    openapi_schema["components"]["securitySchemes"]["BearerAuth"] = {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Masukkan access token dari endpoint /api/auth/login",
+    }
+
+    public_api_paths = {
+        "/api/auth/login",
+        "/api/auth/forgot-password",
+        "/api/auth/reset-password",
+    }
+
+    for path, methods in openapi_schema.get("paths", {}).items():
+        if path in public_api_paths:
+            continue
+
+        for method_name, operation in methods.items():
+            if method_name.lower() in {"get", "post", "put", "patch", "delete"}:
+                operation.setdefault("security", [{"BearerAuth": []}])
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL_PATH = ROOT_DIR / "models" / "best_model_cnn.pth"

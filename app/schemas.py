@@ -34,6 +34,16 @@ class PatientBase(BaseModel):
 class PatientCreate(PatientBase):
     pass
 
+
+class PatientUpdate(BaseModel):
+    nama_lengkap: Optional[str] = Field(None, max_length=100)
+    jenis_kelamin: Optional[str] = Field(None, description="Laki-Laki atau Perempuan")
+    tanggal_lahir: Optional[date] = None
+    alamat: Optional[str] = None
+    no_telepon: Optional[str] = None
+    patient_date: Optional[datetime] = None
+    date: Optional[datetime] = None
+
 class PatientResponse(PatientBase):
     id: int
     id_pasien: str
@@ -106,7 +116,7 @@ class AnalysisProcessResponse(BaseModel):
 class UserBaseSchema(BaseModel):
     full_name: str
     username: str
-    email: str
+    email: Optional[str] = None
     role: str
     is_active: bool = True
 
@@ -120,12 +130,13 @@ class UserUpdateRequest(BaseModel):
     role: Optional[str] = None
     is_active: Optional[bool] = None
     password: Optional[str] = Field(None, min_length=6)
+    new_password: Optional[str] = Field(None, min_length=6)
 
 class UserResponseSchema(BaseModel):
     id: int
     full_name: str
     username: str
-    email: str
+    email: Optional[str] = None
     role: str
     is_active: bool
     created_at: datetime
@@ -178,6 +189,7 @@ class RetrainConfigUpdateRequest(BaseModel):
 class TrainingJobResponse(BaseModel):
     job_id: int
     model_id: Optional[int]
+    model_name: Optional[str] = None
     status: str
     progress_percent: Optional[float] = None
     started_at: Optional[datetime] = None
@@ -299,3 +311,52 @@ class MedicalReportResponse(BaseModel):
     data_klinis: ReportClinicalData
     ringkasan_hasil: ReportResultSummary
     gambar_bukti: List[ReportEvidenceImage] = []
+
+
+# ===============================
+# AUTH SCHEMAS
+# ===============================
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AuthUserResponse(BaseModel):
+    id: int
+    full_name: str
+    username: str
+    email: Optional[str] = None
+    role: str
+    is_active: bool
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: datetime
+    user: AuthUserResponse
+
+
+class AuthMessageResponse(BaseModel):
+    message: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    username_or_email: str
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    reset_token: Optional[str] = None
+    expires_at: Optional[datetime] = None
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=6)
+
+
+class ChangePasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=6)

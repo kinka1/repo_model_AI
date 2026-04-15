@@ -44,6 +44,7 @@ from app.utils import paginate_query
 router = APIRouter(prefix="/api/admin", tags=["Admin Management"])
 
 VALID_ROLES = ["Admin", "Analis", "Dokter"]
+ROLE_MAP = {role.lower(): role for role in VALID_ROLES}
 ROOT_DIR = Path(__file__).resolve().parents[2]
 TRAINING_DATA_DIR = ROOT_DIR / "data" / "retrain"
 TRAINING_DATA_TRAIN = TRAINING_DATA_DIR / "train"
@@ -100,6 +101,12 @@ MODEL_SCRIPT_MAP = {
 
 def _hash_password(password: str) -> str:
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def _normalize_role(role_value: Optional[str]) -> Optional[str]:
+    if role_value is None:
+        return None
+    return ROLE_MAP.get(role_value.strip().lower())
 
 
 def _decimal_to_float(value: Optional[object]) -> Optional[float]:
@@ -457,23 +464,25 @@ def get_user_detail(user_id: int, db: Session = Depends(get_db)):
 
 @router.post("/users", response_model=UserResponseSchema, status_code=201)
 def create_user(payload: UserCreateRequest, db: Session = Depends(get_db)):
-    if payload.role not in VALID_ROLES:
+    normalized_role = _normalize_role(payload.role)
+    if not normalized_role:
         raise HTTPException(status_code=400, detail="Role tidak valid")
 
-    existing = (
-        db.query(User)
-        .filter(or_(User.username == payload.username, User.email == payload.email))
-        .first()
-    )
-    if existing:
-        raise HTTPException(status_code=400, detail="Username atau email sudah digunakan")
+    existing_username = db.query(User).filter(User.username == payload.username).first()
+    if existing_username:
+        raise HTTPException(status_code=400, detail="Username sudah digunakan")
+
+    if payload.email:
+        existing_email = db.query(User).filter(User.email == payload.email).first()
+        if existing_email:
+            raise HTTPException(status_code=400, detail="Email sudah digunakan")
 
     hashed = _hash_password(payload.password)
     db_user = User(
         full_name=payload.full_name,
         username=payload.username,
         email=payload.email,
-        role=payload.role,
+        role=normalized_role,
         hashed_password=hashed,
         is_active=payload.is_active,
     )
@@ -501,20 +510,24 @@ def update_user(user_id: int, payload: UserUpdateRequest, db: Session = Depends(
         if exists_email:
             raise HTTPException(status_code=400, detail="Email sudah digunakan")
         user.email = payload.email
+    elif payload.email == "":
+        user.email = None
 
     if payload.full_name is not None:
         user.full_name = payload.full_name
 
     if payload.role is not None:
-        if payload.role not in VALID_ROLES:
+        normalized_role = _normalize_role(payload.role)
+        if not normalized_role:
             raise HTTPException(status_code=400, detail="Role tidak valid")
-        user.role = payload.role
+        user.role = normalized_role
 
     if payload.is_active is not None:
         user.is_active = payload.is_active
 
-    if payload.password:
-        user.hashed_password = _hash_password(payload.password)
+    new_password = payload.new_password or payload.password
+    if new_password:
+        user.hashed_password = _hash_password(new_password)
 
     db.add(user)
     db.commit()
@@ -539,7 +552,7 @@ def get_roles():
 
 @router.get("/models", response_model=PaginatedResponse[AIModelSummaryResponse])
 def get_models(
-    task_type: Optional[str] = Query(None, description="Filter berdasarkan task (contoh: detection/ classification)"),
+    task_type: Optional[str] = Query(None, description="Filter berdasarkan task (contoh: Detection/ Classification)"),
     page: int = Query(1, ge=1),
     per_page: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -664,17 +677,33 @@ def update_retrain_config(payload: RetrainConfigUpdateRequest, db: Session = Dep
     )
 
 
-@router.get("/models/training-jobs", response_model=List[TrainingJobResponse])
+@router.get("/models/training-jobs", response_model=PaginatedResponse[TrainingJobResponse])
 def get_training_jobs(
-    limit: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None, description="Filter status: TRAINING/COMPLETED/FAILED/IDLE"),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
 ):
-    jobs = (
-        db.query(ModelTrainingStatus)
-        .order_by(ModelTrainingStatus.start_time.desc().nullslast())
-        .limit(limit)
-        .all()
-    )
+    query = db.query(ModelTrainingStatus)
+
+    if status:
+        normalized = status.strip().upper()
+        valid_statuses = {"TRAINING", "COMPLETED", "FAILED", "IDLE"}
+        if normalized not in valid_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail="status harus salah satu: TRAINING, COMPLETED, FAILED, IDLE",
+            )
+        query = query.filter(ModelTrainingStatus.status == normalized)
+
+    query = query.order_by(ModelTrainingStatus.start_time.desc().nullslast())
+    jobs, meta = paginate_query(query, page, per_page)
+
+    model_ids = {job.model_id for job in jobs if job.model_id is not None}
+    model_name_map: Dict[int, str] = {}
+    if model_ids:
+        model_rows = db.query(AIModel.id, AIModel.model_name).filter(AIModel.id.in_(model_ids)).all()
+        model_name_map = {row.id: row.model_name for row in model_rows}
 
     responses: List[TrainingJobResponse] = []
     for job in jobs:
@@ -682,6 +711,7 @@ def get_training_jobs(
             TrainingJobResponse(
                 job_id=job.id,
                 model_id=job.model_id,
+                model_name=model_name_map.get(job.model_id) if job.model_id is not None else None,
                 status=job.status,
                 progress_percent=_decimal_to_float(job.progress),
                 started_at=job.start_time,
@@ -690,7 +720,7 @@ def get_training_jobs(
             )
         )
 
-    return responses
+    return PaginatedResponse[TrainingJobResponse](data=responses, meta=meta)
 
 
 @router.post("/models/retrain", response_model=RetrainStartResponse)
