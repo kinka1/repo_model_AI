@@ -24,7 +24,9 @@ Li, Q., Zhang, H., & Yang, F. (2024). Realtime bacteria detection and analysis i
 
 Hasan, M. R., & Rahman, M. M. (2024). Classification of gram-positive and gram-negative bacteria using few-shot learning algorithm. World Journal of Advanced Research and Reviews, 22(2), 240–247.
 
-Limkriangkrai, M., & Preechayasomboon, P. (2023). The study of image quality effect on model performance for bacteria classification. Engineering Journal, 27(2), 59–70. Smith, K. P., Kang, A. D., & Kirn, T. J. (2018). Automated interpretation of blood culture Gram stains by use of a deep convolutional neural network. Journal of Clinical Microbiology, 56(3), e01521-17.
+Limkriangkrai, M., & Preechayasomboon, P. (2023). The study of image quality effect on model performance for bacteria classification. Engineering Journal, 27(2), 59–70.
+
+Smith, K. P., Kang, A. D., & Kirn, T. J. (2018). Automated interpretation of blood culture Gram stains by use of a deep convolutional neural network. Journal of Clinical Microbiology, 56(3), e01521-17.
 
 Borthakur, D., Medhi, S. P., Chowdhury, R., Sinha, S., & Das, S. (2025). A novel framework CNN-based architecture for automated differentiation between Gram-positive and Gram-negative bacteria. Procedia Computer Science, 225, Article 117466.
 

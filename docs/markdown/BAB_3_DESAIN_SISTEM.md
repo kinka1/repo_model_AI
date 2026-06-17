@@ -50,13 +50,7 @@ Sistem ini memungkinkan integrasi skala kecil maupun besar untuk kebutuhan labor
 
 ## DESIGN TOP LEVEL
 
-Berikut ini merupakan desain sistem secara garis besar
-
-YANG SAYA KERJAKANYANG SAYA KERJAKAN
-
-YANG SAYA KERJAKAN
-
-YANG SAYA KERJAKAN
+Berikut ini merupakan desain sistem secara garis besar yang digunakan dalam pengembangan sistem.
 
 *Gambar 3. 1 Design Sistem*
 
@@ -96,6 +90,47 @@ Beberapa arsitektur CNN yang digunakan dalam eksperimen antara lain:
 ResNet50, ResNet101, EfficientNet-B0, EfficientNet-B3
 
 Arsitektur terbaik dipilih berdasarkan evaluasi akurasi dan waktu inferensi pada data validasi.
+
+## Desain Arsitektur CNN
+
+Sistem ini menggunakan dua kelompok desain arsitektur CNN yang berbeda, yaitu (1) arsitektur Simple CNN yang dibangun dari awal (from scratch) sebagai baseline, dan (2) arsitektur transfer learning berbasis backbone pretrained (ResNet50, ResNet101, EfficientNet-B0, EfficientNet-B3, VGG-16, VGG-19, dan DenseNet121) yang dikombinasikan dengan classifier head khusus untuk klasifikasi dua kelas (Gram-positif dan Gram-negatif). Kedua bentuk arsitektur ini menerima input citra berukuran 224×224×3 (RGB) dan menghasilkan output berupa label kelas beserta confidence score.
+
+Desain Arsitektur Simple CNN (Baseline)
+
+Arsitektur Simple CNN dirancang dengan 5 convolutional layer yang disusun secara berurutan dengan peningkatan jumlah channel (channel progression) 3→32→64→128→256→512. Setiap convolutional layer menggunakan kernel 3×3 dengan padding 1 (mempertahankan ukuran spasial) dan diikuti oleh Max Pooling 2×2 yang mereduksi dimensi spasial menjadi setengahnya. Hasil ekstraksi fitur pada layer terakhir kemudian diratakan (flatten) dan diteruskan ke 3 fully connected layer dengan dimensi 25.088→1.024→512→2. Fungsi aktivasi ReLU digunakan pada seluruh hidden layer, sedangkan output layer menggunakan Softmax untuk menghasilkan probabilitas dua kelas (Gram-positif dan Gram-negatif). Diagram arsitektur ini ditampilkan pada Gambar 4.2 di BAB 4.
+
+![Diagram Arsitektur Simple CNN](images/simple_cnn_architecture.png)
+
+*Tabel 3.2 Desain Arsitektur Simple CNN*
+
+| Layer | Tipe | Konfigurasi | Output Shape |
+|---|---|---|---|
+| Input | Citra | 224×224×3 | 224×224×3 |
+| Conv1 + Pool1 | Conv2D 3×3 (pad 1) + ReLU + MaxPool 2×2 | 3→32 channel | 112×112×32 |
+| Conv2 + Pool2 | Conv2D 3×3 (pad 1) + ReLU + MaxPool 2×2 | 32→64 channel | 56×56×64 |
+| Conv3 + Pool3 | Conv2D 3×3 (pad 1) + ReLU + MaxPool 2×2 | 64→128 channel | 28×28×128 |
+| Conv4 + Pool4 | Conv2D 3×3 (pad 1) + ReLU + MaxPool 2×2 | 128→256 channel | 14×14×256 |
+| Conv5 + Pool5 | Conv2D 3×3 (pad 1) + ReLU + MaxPool 2×2 | 256→512 channel | 7×7×512 |
+| Flatten | Flatten | 7×7×512 → 25.088 | 25.088 |
+| FC1 | Fully Connected + ReLU | 25.088→1.024 | 1.024 |
+| FC2 | Fully Connected + ReLU | 1.024→512 | 512 |
+| FC3 (Output) | Fully Connected + Softmax | 512→2 | 2 (Gram-positif, Gram-negatif) |
+
+Desain Arsitektur Transfer Learning (Backbone + Classifier Head)
+
+Pada arsitektur transfer learning, struktur model dibagi menjadi dua bagian utama: backbone dan classifier head. Backbone merupakan bagian feature extractor dari arsitektur pretrained (ResNet50, ResNet101, EfficientNet-B0, EfficientNet-B3, VGG-16, VGG-19, atau DenseNet121) yang sudah dilatih sebelumnya pada dataset ImageNet, sehingga sudah memiliki kemampuan mengenali fitur visual umum seperti tepi, tekstur, dan pola bentuk. Classifier head asli dari masing-masing arsitektur diganti dengan fully connected layer baru yang disesuaikan dengan jumlah kelas pada penelitian ini.
+
+*Tabel 3.3 Desain Umum Arsitektur Transfer Learning*
+
+| Tahap | Komponen | Keterangan |
+|---|---|---|
+| Input | Citra 224×224×3 | Hasil preprocessing/auto crop YOLO11 |
+| Backbone | ResNet50 / ResNet101 / EfficientNet-B0 / EfficientNet-B3 / VGG-16 / VGG-19 / DenseNet121 (pretrained ImageNet) | Feature extractor; dibekukan (frozen) pada Skenario 3, dan dibuka sebagian (fine-tuning) pada Skenario 4-5 sesuai BAB 4 |
+| Feature Map | Global Average Pooling / Flatten (sesuai arsitektur asli) | Mengubah feature map menjadi vektor fitur |
+| Classifier Head | Fully Connected layer baru | Menggantikan classifier bawaan arsitektur, disesuaikan dengan 2 kelas |
+| Output | Fully Connected + Softmax | 2 kelas: Gram-positif dan Gram-negatif, beserta confidence score |
+
+Pemilihan bagian backbone yang dibekukan atau dibuka (fine-tuned) berbeda untuk setiap arsitektur, misalnya layer4 pada ResNet, beberapa MBConv block terakhir beserta conv_head pada EfficientNet, dan dense block terakhir beserta classifier pada DenseNet. Detail konfigurasi hyperparameter, strategi fine-tuning per arsitektur, serta perbandingan karakteristik tiap arsitektur dijelaskan lebih lanjut pada BAB 4 subbab Spesifikasi Arsitektur dan Konfigurasi Training serta Perbandingan Karakteristik Arsitektur CNN.
 
 Implementasi CNN pada Sistem:
 
@@ -186,7 +221,7 @@ Bagian ini menjelaskan rancangan teknis dari basis data yang akan digunakan dala
 
 *Tabel ai_model*
 
-*Tabel ini digunakan sebagai tabel transaksional utama yang berfungsi untuk mencatat setiap hasil dari proses klasifikasi. Tabel ini menghubungkan data gambar, model AI yang digunakan, dan hasil anotasi ulang oleh dokter.*
+*Tabel ai_model digunakan untuk menyimpan metadata setiap model AI yang terdaftar dalam sistem, meliputi nama model, jenis tugas (task_type), versi, serta metrik performa seperti accuracy, f1-score, dan waktu inferensi. Tabel ini juga mencatat status model (aktif/tidak aktif) dan apakah model tersebut menjadi model yang direkomendasikan.*
 
 *Tabel model_status*
 
@@ -272,7 +307,7 @@ Jumlah Kelas: 2
 
 ## Metode: CNN (dengan dan tanpa transfer learning)
 
-Strategi Validasi: Hold-out validation (80:10:10)
+Strategi Validasi: Hold-out validation dengan stratified split (70:15:15)
 
 Skenario Uji Coba
 
@@ -322,13 +357,13 @@ Tidak
 
 –
 
-Transfer Learning (DenseNet121 dan VGG-16
+Transfer Learning (ResNet50, ResNet101, EfficientNet-B0, EfficientNet-B3)
 
-Menggunakan DenseNet121 /VGG-16dengan bobot dari ImageNet (tanpa pelatihan awal).
+Menggunakan ResNet50, ResNet101, EfficientNet-B0, dan EfficientNet-B3 dengan bobot dari ImageNet (tanpa pelatihan awal).
 
 Bandingkan performa arsitektur CNN populer pre-trained.
 
-DenseNet121 dan VGG-16
+ResNet50, ResNet101, EfficientNet-B0, EfficientNet-B3
 
 Tidak
 
@@ -342,7 +377,7 @@ Model seperti skenario 3, tapi dengan membuka 5 lapisan akhir untuk dilatih ulan
 
 Melihat efek fine-tuning terbatas terhadap performa akhir.
 
-DenseNet121 dan VGG-16
+ResNet50, ResNet101, EfficientNet-B0, EfficientNet-B3
 
 Tidak
 
@@ -356,7 +391,7 @@ Kombinasi skenario 3 & 4, dengan augmentasi + fine-tuning + transfer learning.
 
 Evaluasi kombinasi teknik terbaik yang realistis.
 
-DenseNet121 dan VGG-16
+ResNet50, ResNet101, EfficientNet-B0, EfficientNet-B3, VGG-16, VGG-19, DenseNet121
 
 Ya
 

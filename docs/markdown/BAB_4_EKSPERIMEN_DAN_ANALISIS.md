@@ -62,7 +62,7 @@ Pencahayaan: Pencahayaan mikroskop standar dengan variasi intensitas pewarnaan
 
 Morfologi: Gambar menangkap berbagai bentuk bakteri (kokus, basil, spiril) dengan karakteristik pewarnaan Gram Positif (ungu) dan Gram Negatif (merah/pink)
 
-Kualitas: Gambar dengan rentang ukuran file 4,82 KB - 13,04 KB (rata-rata 8,12 KB)
+Kualitas: Gambar dengan rentang ukuran file 4,82 KB - 13,04 KB
 
 Dataset yang telah dikumpulkan mencakup dua kelas yang relevan untuk mendukung sistem klasifikasi bakteri Gram. Kedua kelas tersebut meliputi Gram Positif dan Gram Negatif. Dataset dirancang sedemikian rupa agar dapat dilatih menjadi sebuah model yang mampu mengklasifikasikan bakteri berdasarkan hasil pewarnaan Gram secara akurat. Dalam penelitian ini, data set yang digunakan terdiri dari 11.824 gambar yang telah dilabeli oleh ahli mikrobiologi. Seluruh gambar tersebut memuat objek bakteri dari dua kelas yang relevan untuk mendukung sistem klasifikasi otomatis.
 
@@ -80,7 +80,7 @@ Gram Negatif
 
 *Tabel 4. 2 Tabel Klasifikasi pada Dataset*
 
-Berdasarkan Tabel 4.1, dapat diidentifikasi bahwa data set memiliki ketidak seimbangan kelas (class imbalance) dengan rasio 3,45:1 antara kelas Gram Negatif dan Gram Positif. Kondisi ini merupakanrefleksi dari distribusi natural sampel bakteri di laboratorium mikrobiologi, dimana bakteri Gram Negatif umumnya lebih banyak ditemukan dalam praktik klinis.
+Berdasarkan Tabel 4.1, dapat diidentifikasi bahwa data set memiliki ketidak seimbangan kelas (class imbalance) dengan rasio 3,45:1 antara kelas Gram Positif dan Gram Negatif. Kondisi ini merupakanrefleksi dari distribusi natural sampel bakteri di laboratorium mikrobiologi, dimana bakteri Gram Positif umumnya lebih banyak ditemukan dalam praktik klinis.
 
 Dataset yang telah dikumpulkan dibagi menjadi tiga bagian yaitu train set, validation set, dan test set, dengan perbandingan 70% : 15% : 15%. Pembagian ini menggunakan metode stratified split untuk memastikan distribusi kelas yang proporsional pada setiap subset. Pembagian ini bertujuan untuk memastikan proses pelatihan model, validasi performa selama pelatihan, serta evaluasi akhir model dapat dilakukan secara optimal.
 
@@ -124,7 +124,7 @@ Total
 
 *Tabel 4. 3 Tabel Pembagian Dataset Penelitian*
 
-Pada data set imbalance, data set condong ke bakteri gram negatif dengan perbandingan 1:3,45 antara bakteri gram positive dan negative. Untuk mengatasi hal tersebut, bisa menggunakan dua strategi utama yaitu :
+Pada data set imbalance, data set condong ke bakteri gram positif dengan perbandingan 3,45:1 antara bakteri gram positif dan negatif. Untuk mengatasi hal tersebut, bisa menggunakan dua strategi utama yaitu :
 
 Penggunaan Class Weights
 
@@ -134,15 +134,15 @@ Dimana N adalah total sampel, nc adalah jumlah kelas, dan Ni adalah jumlah sampe
 
 ## Hasil perhitungan:
 
-Bobot untuk kelas Gram Negatif (mayoritas): 0,65
+Bobot untuk kelas Gram Positif (mayoritas): 0,65
 
-Bobot untuk kelas Gram Positif (minoritas): 2,23
+Bobot untuk kelas Gram Negatif (minoritas): 2,23
 
 Pemberian bobot yang lebih tinggi pada kelas minoritas bertujuan agar model tidak bias dalam memprediksi kelas mayoritas dan memberikan penalti lebih besar untuk kesalahan pada kelas Gram Positif.
 
 Sharpness-based Filtering
 
-Pada skenario baseline, dilakukan pengurangan sampel kelas Gram Negatif menggunakan metode sharpness-based filtering untuk menyeimbangkan jumlah sampel dengan kelas Gram Positif. Metode ini memilih sampel Gram Negatif dengan kualitas terbaik berdasarkan nilai Laplacian variance sebagai indikator ketajaman gambar, sehingga hanya gambar dengan kualitas visual optimal yang dipertahankan dalam data set training yang seimbang. Contoh code-nya :
+Pada skenario baseline, dilakukan pengurangan sampel kelas Gram Positif menggunakan metode sharpness-based filtering untuk menyeimbangkan jumlah sampel dengan kelas Gram Negatif. Metode ini memilih sampel Gram Positif dengan kualitas terbaik berdasarkan nilai Laplacian variance sebagai indikator ketajaman gambar, sehingga hanya gambar dengan kualitas visual optimal yang dipertahankan dalam data set training yang seimbang. Contoh code-nya :
 
 sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
 
@@ -157,6 +157,8 @@ adalah mean dari semua nilai Laplacian
 adalah total pixel
 
 TEMPAT UJICOBA
+
+Ujicoba penelitian ini dilakukan secara mandiri menggunakan laptop pribadi penulis, dengan spesifikasi perangkat keras dan perangkat lunak sebagaimana dijelaskan pada Tabel 4.4.
 
 WAKTU UJICOBA
 
@@ -220,7 +222,7 @@ Visual Studio Code, Python,
 
 Pembagian Data
 
-Pembagian data set adalah tahap penting untuk memastikan bahwa model yang dikembangkan dapat belajar dengan baik dari data latih dan data evaluasi. Dataset pada penelitian ini berjumlah total 9170 gambar, yang dibagi menjadi tiga subset: train, validation, dan test. Pembagian data dilakukan dengan skala 70% : 15% : 15% untuk memastikan distribusi data yang optimal sesuai dengan kebutuhan penelitian.
+Pembagian data set adalah tahap penting untuk memastikan bahwa model yang dikembangkan dapat belajar dengan baik dari data latih dan data evaluasi. Dataset pada penelitian ini berjumlah total 11.824 gambar, yang dibagi menjadi tiga subset: train, validation, dan test. Pembagian data dilakukan dengan skala 70% : 15% : 15% untuk memastikan distribusi data yang optimal sesuai dengan kebutuhan penelitian.
 
 Pre-Processing Data
 
@@ -384,7 +386,9 @@ Aktivasi: Re LUuntuk hidden layers, Softmaxuntuk output layer
 
 Implementasicodenya
 
-*Gambar 4. 2 diagram arsitektur simple cnn*
+![Gambar 4.2 Diagram Arsitektur Simple CNN](../images/simple_cnn_architecture.png)
+
+*Gambar 4. 2 Diagram arsitektur Simple CNN*
 
 Saya menggunakan library untuk Convolutional layer untukekstraksi fitur spatial denganparameter :
 
@@ -411,6 +415,12 @@ Random Rotation (±30°)
 Random Horizontal Flip (p=0,5)
 
 Color Jitter (brightness, contrast, saturation: 0,2)
+
+Spesifikasi Arsitektur dan Konfigurasi Training:
+
+Arsitektur yang digunakan pada Skenario 2 identik dengan Skenario 1 (Simple CNN dengan 5 convolutional layer, channel progression 3→32→64→128→256→512, Max Pooling 2×2, dan 3 fully connected layer 25.088→1.024→512→2). Perbedaan satu-satunya terletak pada proses loading data, di mana teknik augmentasi di atas diterapkan secara on-the-fly pada setiap batch training sehingga model menerima variasi citra yang berbeda pada setiap epoch tanpa menambah jumlah file fisik pada data set.
+
+Konfigurasi training yang digunakan: Optimizer Adam dengan learning rate 0,001, loss function CrossEntropyLoss dengan class weights berdasarkan inverse frequency (lihat subbab Karakteristik Data), dan epoch maksimum 40 sesuai Tabel 4.6. Proses pelatihan dipantau melalui train loss dan validation loss pada setiap epoch untuk memastikan augmentasi tidak menyebabkan model menjadi underfitting akibat variasi data yang terlalu besar.
 
 ## Skenario 3: Transfer Learning dengan ResNet50, ResNet101, EfficientNet b0, dan EfficientNet b3
 
@@ -458,7 +468,7 @@ ResNet50
 
 3b
 
-ResNet50
+ResNet101
 
 43.550.274
 
@@ -497,9 +507,9 @@ Tes Percobaan
 
 Dari scenario di atas menghasilkan sebuah model yang akan dites dengan 10 citra mikroskopis di luar dari data set yang tersedia.
 
-Skenario 1
+## Skenario 1
 
-## Hasil pengujian pada setiap data disajikan pada Gambar 4.2 dan Tabel 4.8 berikut
+Hasil pengujian pada setiap data disajikan pada Gambar 4.2 dan Tabel 4.8 berikut
 
 *Gambar 4.3 Grafik data akurasi dengan model Simple CNN*
 
@@ -524,7 +534,7 @@ Keterbatasan Simple CNN merupakan konsekuensi dari pelatihan from scratch tanpa 
 
 ## Skenario 2
 
-## Hasil pengujian pada setiap data disajikan pada Gambar 4.3 dan Tabel 4.9 berikut
+Hasil pengujian pada setiap data disajikan pada Gambar 4.3 dan Tabel 4.9 berikut
 
 *Tabel 4.9 Data Akurasi Simple CNN dengan Augmentasi*
 
@@ -597,43 +607,176 @@ Berdasarkan data pada grafik dan tabel hasil eksperimen, pendekatan transfer lea
 
 EfficientNet-B3 memperoleh akurasi 0,876251 (87,63%) dan EfficientNet-B0 memperoleh akurasi 0,868261 (86,83%). Keduanya menunjukkan performa yang cukup stabil, tetapi belum melampaui seri ResNet pada skenario fine-tuning ini. VGG-16 dan DenseNet121 menjadi dua model dengan akurasi terendah, yaitu 0,789251 (78,93%) dan 0,797219 (79,72%). Hasil ini menunjukkan bahwa penggunaan bobot pretrained tidak selalu memberikan peningkatan yang sama pada setiap arsitektur, karena efektivitas fine-tuning tetap dipengaruhi oleh desain jaringan, jumlah parameter, dan kemampuan arsitektur dalam menyesuaikan fitur terhadap data set Gram-stain.
 
-## Skenario 5
+Spesifikasi Konfigurasi Training dan Strategi Fine-Tuning Skenario 4:
 
-Pada scenario ini, tujuh arsitektur CNN yang sama dilatih menggunakan pendekatan transfer learning disertai dengan proses fine-tuning. Berbeda dengan pendekatan from scratch, metode ini memanfaatkan bobot pretrained yang telah dipelajari dari data set berskala besar (ImageNet) sebagai titik awal, kemudian melakukan penyesuaian bobot secara menyeluruh terhadap data set target melalui proses fine-tuning. Hasil evaluasi akurasi dari seluruh model disajikan pada Gambar 4.6 dan Tabel 4.12 berikut.
+Pelatihan pada Skenario 4 dilakukan dalam dua fase berurutan untuk setiap arsitektur (ResNet50, ResNet101, EfficientNet-B0, EfficientNet-B3):
+
+- Fase 1 (Head Training): seluruh backbone pretrained dibekukan (frozen) dan hanya classifier head yang dilatih, menggunakan optimizer AdamW dengan learning rate 0,001 dan weight decay 0,0001. Fase ini bertujuan menstabilkan classifier baru sebelum bobot backbone ikut diperbarui.
+- Fase 2 (Fine-tuning): sebagian layer terakhir backbone dibuka (unfrozen) bersama classifier head, kemudian dilatih kembali dengan learning rate yang lebih kecil yaitu 0,0001 agar representasi fitur pretrained tidak rusak (catastrophic forgetting) namun tetap dapat disesuaikan terhadap karakteristik citra Gram-stain.
+
+Layer yang dibuka pada fase fine-tuning berbeda untuk setiap arsitektur, menyesuaikan struktur blok masing-masing:
+
+- ResNet50 dan ResNet101: residual block terakhir (layer4) beserta fully connected classifier.
+- EfficientNet-B0 dan EfficientNet-B3: beberapa MBConv block terakhir, conv_head, batch normalization terkait, beserta classifier.
+
+Kedua fase menggunakan loss function weighted CrossEntropyLoss dengan bobot kelas berdasarkan inverse frequency (lihat subbab Karakteristik Data), serta learning rate scheduler ReduceLROnPlateau (factor 0,5, patience 3 epoch) yang menurunkan learning rate apabila macro F1-score pada validation set tidak meningkat. Early stopping dengan patience 10 epoch diterapkan untuk menghentikan pelatihan apabila tidak ada peningkatan performa, dengan batas epoch maksimum 80 sesuai Tabel 4.6.
+
+Strategi dua fase ini bertujuan untuk memanfaatkan representasi fitur umum dari ImageNet pada fase awal, kemudian secara bertahap menyesuaikan fitur tersebut terhadap domain citra Gram-stain pada fase fine-tuning, tanpa mengorbankan stabilitas pelatihan akibat perubahan bobot yang terlalu drastis pada awal proses.
+
+## Skenario 5: Transfer Learning dan Fine-Tuning Arsitektur CNN
+
+Pada skenario ini, beberapa arsitektur CNN dilatih menggunakan pendekatan transfer learning dan fine-tuning. Berbeda dengan pelatihan from scratch, transfer learning memanfaatkan bobot pretrained ImageNet sebagai titik awal pembelajaran, kemudian bobot model disesuaikan kembali terhadap data set citra Gram-stain. Arsitektur yang diuji meliputi ResNet50, ResNet101, EfficientNet-B0, EfficientNet-B3, VGG-16, VGG-19, dan DenseNet121.
+
+Tujuan utama skenario ini adalah melihat kemampuan masing-masing arsitektur dalam memanfaatkan representasi visual pretrained untuk membedakan citra Gram-negatif dan Gram-positif. Analisis tidak hanya dilakukan berdasarkan akurasi, tetapi juga berdasarkan precision, recall, F1-score, confusion matrix, dan pola loss selama pelatihan.
+
+### Konfigurasi Umum Pelatihan Skenario 5
+
+Sebagian besar konfigurasi pelatihan pada Skenario 5 dibuat sama agar perbedaan hasil lebih banyak dipengaruhi oleh karakteristik arsitektur model. Konfigurasi umum yang digunakan adalah sebagai berikut.
+
+| Komponen | Konfigurasi Umum |
+|---|---|
+| Framework | PyTorch |
+| Input citra | RGB 224 x 224 piksel |
+| Pretrained weights | ImageNet |
+| Jumlah kelas output | 2 kelas: Gram-negatif dan Gram-positif |
+| Loss function | Weighted CrossEntropyLoss |
+| Scheduler | ReduceLROnPlateau |
+| Strategi checkpoint | Menyimpan model terbaik berdasarkan performa validasi |
+| Metrik evaluasi | Accuracy, precision, recall, F1-score, ROC-AUC, dan confusion matrix |
+| Augmentasi data | Transformasi citra latih seperti rotasi, flipping, color jitter, dan resize/crop sesuai script pelatihan masing-masing |
+
+Secara umum, proses pelatihan dilakukan dalam dua tahap. Tahap pertama melatih classifier head dengan backbone pretrained sebagai feature extractor. Tahap kedua melakukan fine-tuning dengan membuka sebagian layer akhir atau seluruh model, bergantung pada arsitektur dan kebutuhan komputasi. Dengan strategi ini, model dapat mempertahankan fitur visual umum dari ImageNet sekaligus menyesuaikan fitur akhir terhadap karakteristik citra Gram-stain.
+
+### Perbedaan Hyperparameter per Arsitektur
+
+Tidak semua hyperparameter pada Skenario 5 sama. Perbedaan terutama terdapat pada optimizer, batch size, jumlah epoch maksimum, learning rate, dan bagian backbone yang dibuka saat fine-tuning. Perbedaan tersebut diperlukan karena setiap arsitektur memiliki ukuran parameter, kebutuhan memori, dan karakteristik optimasi yang berbeda.
+
+| Arsitektur | Optimizer | Batch Size | Epoch Maksimum | Learning Rate | Strategi Fine-tuning |
+|---|---|---:|---:|---|---|
+| ResNet50 | AdamW | 32 | 40 | 0,001 lalu 0,0001 | Melatih classifier head, lalu membuka `layer4` dan classifier |
+| ResNet101 | AdamW | 32 | 60 | 0,001 lalu 0,0001 | Melatih classifier head, lalu membuka blok residual terakhir dan classifier |
+| EfficientNet-B0 | AdamW | 32 | 60 | 0,001 lalu 0,0001 | Melatih classifier head, lalu membuka blok akhir EfficientNet dan classifier |
+| EfficientNet-B3 | AdamW | 16 | 60 | 0,001 lalu 0,0001 | Melatih classifier head, lalu membuka beberapa blok akhir EfficientNet dan classifier |
+| VGG-16 | SGD momentum 0,9 | 8 | 80 | 0,00005 | Fine-tuning full model dengan classifier custom |
+| VGG-19 | SGD momentum 0,9 | 8 | 80 | 0,00005 | Fine-tuning full model dengan classifier custom |
+| DenseNet121 | AdamW | 16 | 48 | 0,001 lalu 0,0001 | Melatih classifier head, lalu membuka dense block terakhir dan classifier |
+
+Perbedaan hyperparameter tersebut menunjukkan bahwa Skenario 5 tidak sepenuhnya menggunakan konfigurasi identik untuk setiap arsitektur. Model yang lebih besar seperti VGG-16 dan VGG-19 menggunakan batch size lebih kecil karena kebutuhan memori lebih tinggi. EfficientNet-B3 juga menggunakan batch size lebih kecil dibanding EfficientNet-B0 karena memiliki kapasitas model yang lebih besar. Sementara itu, ResNet dan DenseNet menggunakan pola dua tahap yang relatif serupa, yaitu head training diikuti fine-tuning pada blok akhir.
+
+### Hasil Pelatihan ResNet50
+
+Model ResNet50 pada Skenario 5 menggunakan hasil eksperimen `experiments/ta_resnet50_20260615_021715`. Model ini memperoleh akurasi sebesar 0,951696 dengan macro F1-score sebesar 0,951696 dan ROC-AUC sebesar 0,988272. Nilai tersebut menunjukkan bahwa ResNet50 mampu memanfaatkan residual connection dan bobot pretrained ImageNet secara efektif untuk mempelajari fitur pembeda antara Gram-negatif dan Gram-positif.
+
+Confusion matrix ResNet50 menghasilkan TN sebesar 1.649, FP sebesar 90, FN sebesar 78, dan TP sebesar 1.661. Kesalahan klasifikasi relatif seimbang pada kedua kelas, dengan FP sedikit lebih tinggi dibanding FN. Hal ini menunjukkan bahwa model sedikit lebih sering mengklasifikasikan citra Gram-negatif sebagai Gram-positif, tetapi selisihnya kecil sehingga tidak menunjukkan bias yang kuat terhadap salah satu kelas.
+
+Dari sisi pelatihan, ResNet50 mencapai epoch terbaik pada epoch ke-31 dengan train loss 0,1054 dan validation loss 0,1466. Train loss dan validation loss yang sama-sama rendah menunjukkan bahwa model telah konvergen dengan baik. Namun, validation loss yang mulai stagnan ketika train loss masih menurun mengindikasikan adanya mild overfitting pada akhir pelatihan, sehingga penggunaan checkpoint terbaik pada epoch ke-31 menjadi keputusan yang tepat.
+
+### Hasil Pelatihan ResNet101
+
+ResNet101 memiliki kedalaman lebih besar dibanding ResNet50, sehingga secara teoritis memiliki kapasitas representasi fitur yang lebih tinggi. Berdasarkan hasil eksperimen `experiments/resnet101_finetune_20260413_003414`, ResNet101 memperoleh akurasi sebesar 0,951409 dan macro F1-score sebesar 0,951404 pada epoch terbaik ke-60. Confusion matrix menunjukkan TN sebesar 1.672, FP sebesar 67, FN sebesar 102, dan TP sebesar 1.637.
+
+Hasil tersebut menunjukkan bahwa ResNet101 memiliki performa yang sangat dekat dengan ResNet50. Nilai FP yang lebih rendah dibanding ResNet50 menunjukkan bahwa ResNet101 lebih baik dalam mempertahankan prediksi Gram-negatif, tetapi nilai FN yang lebih tinggi menunjukkan bahwa sebagian citra Gram-positif masih salah diklasifikasikan sebagai Gram-negatif. Dengan demikian, peningkatan kedalaman jaringan tidak otomatis menghasilkan peningkatan performa yang besar pada data set ini.
+
+Dari sisi loss, ResNet101 memperoleh train loss 0,0496 dan validation loss 0,1867 pada epoch terbaik. Jarak antara train loss dan validation loss lebih besar dibanding ResNet50, sehingga model ini menunjukkan indikasi overfitting yang lebih kuat. Hal ini wajar karena ResNet101 memiliki jumlah parameter lebih besar, sehingga membutuhkan kontrol regularisasi dan data yang memadai agar kapasitas model tidak terlalu menyesuaikan diri terhadap data latih.
+
+### Hasil Pelatihan EfficientNet-B0
+
+EfficientNet-B0 merupakan arsitektur yang relatif ringan dan efisien secara parameter. Berdasarkan hasil eksperimen `experiments/efficientnet_b0_finetune_20260413_145240`, model ini memperoleh akurasi sebesar 0,910868 dan macro F1-score sebesar 0,910782 pada epoch terbaik ke-34. Confusion matrix menunjukkan TN sebesar 1.638, FP sebesar 101, FN sebesar 209, dan TP sebesar 1.530.
+
+Hasil tersebut menunjukkan bahwa EfficientNet-B0 mampu mencapai performa yang baik dengan jumlah parameter yang lebih kecil dibanding ResNet dan VGG. Namun, nilai FN yang lebih tinggi dibanding FP menunjukkan bahwa model lebih sering gagal mengenali citra Gram-positif. Dengan kata lain, model cenderung lebih kuat dalam mengenali Gram-negatif daripada Gram-positif pada konfigurasi eksperimen ini.
+
+Train loss pada epoch terbaik adalah 0,1713 dan validation loss sebesar 0,2389. Pola ini menunjukkan konvergensi yang cukup baik, tetapi performanya masih berada di bawah ResNet50 dan ResNet101. Hal ini dapat disebabkan oleh kapasitas EfficientNet-B0 yang lebih kecil, sehingga fitur yang dipelajari tidak sedalam model ResNet pada data set Gram-stain.
+
+### Hasil Pelatihan EfficientNet-B3
+
+EfficientNet-B3 memiliki kapasitas lebih besar dibanding EfficientNet-B0 melalui compound scaling pada depth, width, dan resolution. Berdasarkan hasil eksperimen `experiments/scenario_3d_efficientnet_b3`, model ini memperoleh akurasi sebesar 0,866967, precision sebesar 0,888376, recall sebesar 0,866967, F1-score sebesar 0,872866, dan ROC-AUC sebesar 0,944491. Confusion matrix menunjukkan TN sebesar 1.195, FP sebesar 181, FN sebesar 55, dan TP sebesar 343.
+
+Hasil ini menunjukkan bahwa EfficientNet-B3 memiliki kemampuan pemisahan kelas yang cukup baik berdasarkan ROC-AUC, tetapi akurasinya belum melampaui EfficientNet-B0 maupun ResNet pada eksperimen yang tersedia. Nilai FP yang jauh lebih tinggi dibanding FN menunjukkan bahwa model lebih sering salah mengklasifikasikan Gram-negatif sebagai Gram-positif. Pola ini berbeda dari EfficientNet-B0, yang lebih banyak menghasilkan FN.
+
+Performa EfficientNet-B3 yang belum optimal dapat dipengaruhi oleh konfigurasi pelatihan dan karakteristik data. Walaupun kapasitas model lebih besar, model yang lebih kompleks juga membutuhkan penyesuaian learning rate, jumlah epoch, dan strategi fine-tuning yang lebih tepat agar manfaat compound scaling dapat dimanfaatkan secara maksimal.
+
+### Hasil Pelatihan VGG-16
+
+VGG-16 pada Skenario 5 menggunakan hasil eksperimen `experiments/scenario_5a_vgg16`. Model ini memperoleh akurasi sebesar 0,953113, precision sebesar 0,954171, recall sebesar 0,953113, F1-score sebesar 0,953399, dan ROC-AUC sebesar 0,988942. Confusion matrix menunjukkan TN sebesar 2.509, FP sebesar 119, FN sebesar 61, dan TP sebesar 1.150.
+
+Hasil tersebut menunjukkan bahwa VGG-16 mampu menghasilkan performa tinggi setelah dilakukan transfer learning dan fine-tuning penuh. Meskipun VGG-16 memiliki arsitektur yang lebih sederhana tanpa residual connection maupun dense connection, jumlah parameter yang besar dan classifier custom memungkinkan model mempelajari pola visual Gram-stain secara efektif pada eksperimen ini.
+
+Kesalahan klasifikasi VGG-16 lebih banyak terjadi pada FP dibanding FN. Artinya, model lebih sering memprediksi citra Gram-negatif sebagai Gram-positif dibanding sebaliknya. Namun, secara umum nilai kesalahan relatif rendah dibanding jumlah data evaluasi, sehingga performa VGG-16 dapat dikategorikan baik. Kelemahannya adalah ukuran parameter yang sangat besar, sehingga kebutuhan memori dan waktu pelatihan lebih tinggi dibanding ResNet dan EfficientNet.
+
+### Hasil Pelatihan VGG-19
+
+VGG-19 menggunakan hasil eksperimen `experiments/scenario_5b_vgg19`. Model ini memperoleh akurasi sebesar 0,956239, precision sebesar 0,956847, recall sebesar 0,956239, F1-score sebesar 0,956426, dan ROC-AUC sebesar 0,990255. Confusion matrix menunjukkan TN sebesar 2.524, FP sebesar 104, FN sebesar 64, dan TP sebesar 1.147.
+
+Jika dibandingkan dengan VGG-16, VGG-19 memperoleh akurasi dan F1-score sedikit lebih tinggi. Tambahan layer konvolusi pada VGG-19 tampaknya membantu model menangkap pola visual yang lebih kompleks pada citra Gram-stain. Nilai ROC-AUC yang mencapai 0,990255 juga menunjukkan kemampuan pemisahan kelas yang sangat baik.
+
+Meskipun demikian, VGG-19 memiliki jumlah parameter lebih besar daripada VGG-16, sehingga biaya komputasi dan kebutuhan memori juga lebih tinggi. Peningkatan performa yang diperoleh relatif kecil dibanding tambahan kompleksitas model. Oleh karena itu, VGG-19 memberikan performa yang sangat baik, tetapi perlu dipertimbangkan dari sisi efisiensi jika model akan digunakan pada sistem dengan sumber daya terbatas.
+
+### Hasil Pelatihan DenseNet121
+
+DenseNet121 menggunakan hasil eksperimen `experiments/retrain_densenet121_20260414_171014`. Model ini memperoleh akurasi sebesar 0,868678 dan macro F1-score sebesar 0,868514 pada epoch terbaik ke-2. Confusion matrix menunjukkan TN sebesar 1.573, FP sebesar 166, FN sebesar 291, dan TP sebesar 1.450.
+
+Hasil tersebut menunjukkan bahwa DenseNet121 mampu mengenali kedua kelas dengan performa cukup baik, tetapi masih berada di bawah ResNet50, ResNet101, VGG-16, dan VGG-19 pada hasil eksperimen yang tersedia. Nilai FN yang lebih tinggi dibanding FP menunjukkan bahwa DenseNet121 lebih sering salah mengklasifikasikan Gram-positif sebagai Gram-negatif. Dengan demikian, kelemahan utama model ini pada eksperimen tersebut adalah sensitivitas terhadap kelas Gram-positif.
+
+Train loss pada epoch terbaik adalah 0,4002 dan validation loss sebesar 0,3044. Nilai validation loss yang lebih rendah daripada train loss dapat terjadi karena pengaruh augmentasi dan regularisasi pada data latih, sehingga data latih menjadi lebih sulit dibanding data validasi. Namun, karena epoch terbaik terjadi sangat awal, hasil ini juga menunjukkan bahwa pelatihan DenseNet121 masih perlu dieksplorasi lebih lanjut, misalnya dengan penyesuaian jumlah epoch, learning rate, dan strategi pembukaan dense block.
+
+### Analisis Perbandingan Hasil Skenario 5
+
+Ringkasan hasil setiap arsitektur CNN yang telah dicoba pada Skenario 5 disajikan pada Tabel 4.12. Beberapa hasil berasal dari folder eksperimen yang berbeda, sehingga ukuran data evaluasi dan konfigurasi detail tidak selalu identik. Oleh karena itu, tabel ini digunakan sebagai ringkasan hasil eksperimen yang tersedia, sedangkan interpretasi utama tetap memperhatikan analisis masing-masing arsitektur.
 
 *Gambar 4.6 Grafik Data Akurasi Model CNN dengan Transfer Learning dan Fine-Tuning*
 
-*Tabel 4.12 Data Akurasi Model CNN dengan Transfer Learning dan Fine-Tuning*
+*Tabel 4.12 Ringkasan Hasil Model CNN dengan Transfer Learning dan Fine-Tuning*
 
-| No. | Arsitektur Model | Akurasi |
-|---:|---|---:|
-| 1 | ResNet50 | 0.951663 |
-| 2 | ResNet101 | 0.968832 |
-| 3 | EfficientNet-B0 | 0.879411 |
-| 4 | EfficientNet-B3 | 0.984627 |
-| 5 | VGG-16 | 0.808688 |
-| 6 | VGG-19 | 0.875571 |
-| 7 | DenseNet121 | 0.809248 |
+| No. | Arsitektur Model | Akurasi | F1-score | ROC-AUC | Sumber Eksperimen |
+|---:|---|---:|---:|---:|---|
+| 1 | ResNet50 | 0,951696 | 0,951696 | 0,988272 | `ta_resnet50_20260615_021715` |
+| 2 | ResNet101 | 0,951409 | 0,951404 | Tidak tersedia | `resnet101_finetune_20260413_003414` |
+| 3 | EfficientNet-B0 | 0,910868 | 0,910782 | Tidak tersedia | `efficientnet_b0_finetune_20260413_145240` |
+| 4 | EfficientNet-B3 | 0,866967 | 0,872866 | 0,944491 | `scenario_3d_efficientnet_b3` |
+| 5 | VGG-16 | 0,953113 | 0,953399 | 0,988942 | `scenario_5a_vgg16` |
+| 6 | VGG-19 | 0,956239 | 0,956426 | 0,990255 | `scenario_5b_vgg19` |
+| 7 | DenseNet121 | 0,868678 | 0,868514 | Tidak tersedia | `retrain_densenet121_20260414_171014` |
 
-Berdasarkan data pada Gambar 4.6 dan Tabel 4.12, pendekatan transfer learning yang dikombinasikan dengan fine-tuning menghasilkan peningkatan performa pada sebagian besar arsitektur dibandingkan pelatihan from scratch. Hal ini mengonfirmasi bahwa pemanfaatan bobot pretrained dari data set berskala besar memberikan fondasi representasi fitur yang lebih kuat, sehingga model dapat belajar fitur-fitur yang lebih diskriminatif dari data set target dengan lebih efisien.
+Berdasarkan ringkasan tersebut, VGG-19 memperoleh akurasi tertinggi sebesar 0,956239, diikuti oleh VGG-16 sebesar 0,953113, ResNet50 sebesar 0,951696, dan ResNet101 sebesar 0,951409. Keempat model ini berada pada rentang performa yang sangat dekat, sehingga perbedaan akurasi tidak hanya perlu dilihat dari nilai akhir, tetapi juga dari stabilitas loss, jumlah parameter, dan pola kesalahan pada confusion matrix.
 
-Arsitektur EfficientNet-B3 menjadi model dengan performa terbaik pada skenario ini, mencatatkan akurasi tertinggi sebesar 0,9846 (98,46%), melonjak drastis dari 0,8391 (83,91%) pada skenario from scratch, atau meningkat sebesar 14,55 poin persentase. Peningkatan luar biasa ini menunjukkan bahwa EfficientNet-B3 memiliki kapasitas representasi fitur yang sangat tinggi yang baru dapat dioptimalkan secara penuh ketika diinisialisasi dengan bobot pretrained. Posisi kedua ditempati oleh ResNet101 dengan akurasi 0,9688 (96,88%), diikuti ResNet50 dengan 0,9517 (95,17%), yang juga mengalami peningkatan signifikan masing-masing sebesar 4,27 dan 3,04 poin persentase dari skenario sebelumnya.
+ResNet50 menjadi model yang seimbang antara performa dan efisiensi. Walaupun akurasinya sedikit di bawah VGG-16 dan VGG-19, jumlah parameternya jauh lebih kecil daripada VGG, dan pola confusion matrix menunjukkan kesalahan yang relatif seimbang antara kelas Gram-negatif dan Gram-positif. ResNet101 memiliki performa yang sangat dekat dengan ResNet50, tetapi indikasi overfitting lebih kuat karena train loss jauh lebih rendah daripada validation loss.
 
-Di sisi lain, meskipun sebagian besar model mengalami peningkatan, arsitektur VGG-16 tidak menunjukkan perubahan akurasi dan tetap berada di angka 0,808688 (80,87%), identik dengan nilai yang diperoleh pada skenario from scratch. Fenomena ini mengindikasikan bahwa arsitektur VGG-16 kemungkinan mengalami kendala dalam proses fine-tuning, seperti learning rate yang kurang optimal atau terjadinya catastrophic forgetting pada lapisan awal jaringan. DenseNet121 hanya meningkat sedikit dari 0,782712 menjadi 0,809248, sedangkan EfficientNet-B0 dan VGG-19 masing-masing memperoleh akurasi 0,879411 dan 0,875571.
+VGG-16 dan VGG-19 menunjukkan performa tinggi pada eksperimen ini. Namun, kedua model memiliki jumlah parameter sangat besar, sehingga membutuhkan memori dan waktu pelatihan lebih tinggi. VGG-19 memberikan hasil terbaik secara akurasi dan ROC-AUC, tetapi peningkatannya terhadap VGG-16 relatif kecil dibanding tambahan kompleksitas model.
 
-Rentang akurasi pada skenario ini adalah 0,175939 atau sekitar 17,59 poin persentase antara model terbaik (EfficientNet-B3: 98,46%) dan model terendah (VGG-16: 80,87%). Hal ini menunjukkan bahwa pendekatan transfer learning dengan fine-tuning memberikan keuntungan yang tidak merata di antara arsitektur yang berbeda. Arsitektur dengan desain modern dan efisien seperti EfficientNet dan ResNet dapat memanfaatkan bobot pretrained secara lebih optimal dibandingkan arsitektur yang lebih lama seperti VGG dan DenseNet. Dengan demikian, temuan ini menegaskan bahwa kombinasi pemilihan arsitektur dan strategi pelatihan merupakan faktor penting dalam memaksimalkan performa model klasifikasi berbasis deep learning.
+EfficientNet-B0 dan EfficientNet-B3 menunjukkan performa lebih rendah dibanding ResNet dan VGG pada eksperimen yang tersedia. EfficientNet-B0 lebih stabil daripada EfficientNet-B3 pada hasil ini, meskipun EfficientNet-B3 memiliki kapasitas lebih besar. Hal ini menunjukkan bahwa kapasitas arsitektur yang lebih besar tidak otomatis menghasilkan performa lebih tinggi jika konfigurasi fine-tuning belum optimal.
 
-Pengaruh Transfer Learning dan Fine-Tuning
+DenseNet121 memperoleh performa cukup baik, tetapi masih memiliki kelemahan pada pengenalan kelas Gram-positif yang terlihat dari nilai FN yang tinggi. Meskipun DenseNet memiliki mekanisme dense connection dan jumlah parameter yang relatif efisien, hasil eksperimen menunjukkan bahwa strategi pelatihan dan penyesuaian hyperparameter masih sangat berpengaruh terhadap performanya pada citra Gram-stain.
 
-Transfer learning memberikan keuntungan karena model tidak memulai proses pembelajaran dari bobot acak, melainkan dari representasi visual umum yang telah dipelajari pada data set berskala besar seperti ImageNet. Representasi awal seperti deteksi tepi, tekstur, pola warna, dan bentuk dasar masih relevan untuk citra Gram-stain, meskipun domain citra medis berbeda dari citra natural. Oleh karena itu, model dapat lebih cepat beradaptasi terhadap tugas klasifikasi Gram-positif dan Gram-negatif.
+Secara keseluruhan, hasil Skenario 5 menunjukkan bahwa transfer learning dan fine-tuning mampu meningkatkan kemampuan model dalam mempelajari fitur citra Gram-stain. Namun, keberhasilan setiap arsitektur tetap dipengaruhi oleh ukuran model, mekanisme koneksi internal, strategi fine-tuning, serta konfigurasi hyperparameter yang digunakan.
 
-Fine-tuning berperan untuk menyesuaikan bobot pretrained terhadap karakteristik data set target. Pada citra mikroskopis, perbedaan kelas tidak hanya ditentukan oleh bentuk objek, tetapi juga oleh intensitas warna hasil pewarnaan, kualitas fokus, dan variasi preparat. Dengan membuka sebagian atau seluruh layer untuk dilatih kembali, model dapat mempelajari fitur yang lebih spesifik terhadap domain Gram-stain. Namun, hasil eksperimen menunjukkan bahwa manfaat fine-tuning bergantung pada arsitektur dan konfigurasi pelatihan. Arsitektur seperti EfficientNet-B3 dan ResNet mampu memanfaatkan fine-tuning dengan baik, sedangkan beberapa arsitektur lain tidak memperoleh peningkatan yang sama besar.
+## Perbandingan Karakteristik Arsitektur CNN
 
-## Template Confusion Matrix
+Setiap arsitektur CNN yang digunakan pada penelitian ini memiliki mekanisme dan karakteristik desain yang berbeda, sehingga memengaruhi cara masing-masing model mempelajari fitur dari citra Gram-stain. Tabel berikut merangkum perbandingan karakteristik utama dari kedelapan arsitektur yang dievaluasi.
 
-Confusion matrix digunakan untuk melihat distribusi prediksi benar dan salah pada masing-masing kelas. Pada penelitian ini, kelas yang digunakan adalah Gram-negatif dan Gram-positif. Template berikut dapat digunakan sebagai landasan untuk menambahkan hasil confusion matrix dari setiap model setelah proses evaluasi selesai dilakukan.
+| Arsitektur | Kedalaman / Mekanisme Khas | Total Parameter (±) | Karakteristik untuk Citra Gram-stain |
+|---|---|---:|---|
+| Simple CNN | 5 convolutional layer + 3 fully connected layer, tanpa skip connection atau dense connection | < 50 juta | Baseline ringan, seluruh fitur dipelajari dari awal sehingga performa bergantung penuh pada jumlah dan kualitas data latih |
+| ResNet50 | 50 layer dengan residual (skip) connection | 24,5 juta | Skip connection menjaga aliran gradien pada jaringan dalam, efektif mempelajari tekstur dan bentuk bakteri meski dilatih dari awal |
+| ResNet101 | 101 layer dengan residual (skip) connection, lebih dalam dari ResNet50 | 43,5 juta | Kapasitas representasi lebih besar dari ResNet50, namun membutuhkan lebih banyak komputasi dan data agar tidak overfitting |
+| EfficientNet-B0 | Compound scaling (depth, width, resolution) berbasis MBConv block | 4,7 juta | Arsitektur paling ringan, efisien secara parameter, namun pada pelatihan from scratch memerlukan representasi pretrained agar performa optimal |
+| EfficientNet-B3 | Compound scaling dengan skala lebih besar dari EfficientNet-B0 | 11,5 juta | Kapasitas representasi tinggi yang baru terlihat optimal ketika dikombinasikan dengan transfer learning dan fine-tuning |
+| VGG-16 | 16 layer dengan convolution 3x3 bertumpuk, tanpa skip/dense connection | ± 138 juta | Struktur sederhana namun parameter sangat besar, rentan overfitting pada data set berukuran sedang seperti pada penelitian ini |
+| VGG-19 | 19 layer dengan convolution 3x3 bertumpuk, lebih dalam dari VGG-16 | ± 143 juta | Pola serupa VGG-16 dengan kapasitas sedikit lebih besar, tetap rentan terhadap overfitting dan kendala fine-tuning |
+| DenseNet121 | 121 layer dengan dense connection (feature reuse antar layer) | ± 8 juta | Parameter efisien melalui feature reuse, tetapi performa tetap bergantung pada strategi pelatihan dan jumlah data yang memadai |
 
-*Tabel 4.X Template Confusion Matrix Model [Nama Model]*
+Berdasarkan perbandingan tersebut, terdapat tiga kelompok karakter arsitektur yang relevan terhadap hasil eksperimen pada Skenario 3-5:
+
+1. Arsitektur dengan residual connection (ResNet50, ResNet101) cenderung stabil baik pada pelatihan from scratch maupun setelah fine-tuning, karena mekanisme skip connection membantu aliran gradien pada jaringan yang dalam.
+2. Arsitektur dengan compound scaling (EfficientNet-B0, EfficientNet-B3) memiliki desain efisien parameter, tetapi hasil eksperimen menunjukkan bahwa kapasitas tersebut tetap membutuhkan konfigurasi fine-tuning yang tepat agar performanya optimal pada data set Gram-stain.
+3. Arsitektur VGG-16 dan VGG-19 menunjukkan performa tinggi setelah fine-tuning penuh, tetapi membutuhkan jumlah parameter dan komputasi yang besar. Sebaliknya, DenseNet121 memiliki parameter lebih efisien melalui feature reuse, tetapi performanya masih bergantung kuat pada strategi pelatihan dan penyesuaian hyperparameter.
+
+Perbandingan ini menegaskan bahwa pemilihan arsitektur CNN untuk klasifikasi bakteri Gram tidak hanya bergantung pada jumlah parameter atau kedalaman jaringan, tetapi juga pada kesesuaian mekanisme arsitektur (residual connection, compound scaling, atau dense connection) dengan strategi pelatihan yang digunakan (from scratch, transfer learning, atau fine-tuning).
+
+## Confusion Matrix
+
+Confusion matrix digunakan untuk melihat distribusi prediksi benar dan salah pada masing-masing kelas. Pada penelitian ini, kelas yang digunakan adalah Gram-negatif dan Gram-positif. Format dasar confusion matrix ditunjukkan terlebih dahulu, kemudian diikuti oleh hasil confusion matrix dari model yang sudah memiliki artefak evaluasi.
+
+*Tabel 4.X Format Confusion Matrix*
 
 | Aktual \ Prediksi | Gram-negatif | Gram-positif |
 |---|---:|---:|
@@ -647,17 +790,79 @@ Keterangan:
 - FN (False Negative): jumlah citra Gram-positif yang salah diprediksi sebagai Gram-negatif.
 - TP (True Positive): jumlah citra Gram-positif yang diprediksi benar sebagai Gram-positif.
 
-Template tersebut dapat digunakan untuk masing-masing arsitektur, misalnya Simple CNN, ResNet50, ResNet101, EfficientNet-B0, EfficientNet-B3, VGG-16, VGG-19, dan DenseNet121. Setelah nilai TN, FP, FN, dan TP tersedia, analisis dapat diarahkan pada pola kesalahan model, bukan hanya pada nilai akurasi.
+Format di atas digunakan untuk mencatat hasil confusion matrix dari setiap arsitektur yang dievaluasi. Pada bagian ini, nilai confusion matrix diisi untuk arsitektur yang sudah memiliki artefak evaluasi lengkap. Simple CNN tetap disediakan sebagai template karena nilai TP, TN, FP, dan FN belum tersedia pada format evaluasi yang sama.
 
-### Template Analisis Confusion Matrix Model [Nama Model]
+*Tabel 4.X.1 Confusion Matrix Model Simple CNN*
 
-Model [Nama Model] menghasilkan nilai TN sebesar [...], FP sebesar [...], FN sebesar [...], dan TP sebesar [...]. Berdasarkan distribusi tersebut, model menunjukkan kemampuan yang [baik/cukup/kurang] dalam membedakan kelas Gram-negatif dan Gram-positif.
+| Aktual \ Prediksi | Gram-negatif | Gram-positif |
+|---|---:|---:|
+| Gram-negatif | Belum tersedia | Belum tersedia |
+| Gram-positif | Belum tersedia | Belum tersedia |
 
-Kesalahan prediksi paling dominan terjadi pada bagian [...], yaitu ketika model memprediksi [...] sebagai [...]. Kondisi ini menunjukkan bahwa model masih mengalami kesulitan dalam mengenali karakteristik visual [...], terutama pada citra dengan kondisi [...].
+*Tabel 4.X.2 Confusion Matrix Model ResNet50*
 
-Jika nilai FP tinggi, model cenderung salah mengklasifikasikan citra Gram-negatif sebagai Gram-positif. Jika nilai FN tinggi, model cenderung salah mengklasifikasikan citra Gram-positif sebagai Gram-negatif. Dalam konteks pemeriksaan bakteri, pola kesalahan ini penting karena dapat menunjukkan bias model terhadap salah satu kelas dan membantu menentukan apakah model lebih baik dalam mengenali kelas Gram-negatif atau Gram-positif.
+| Aktual \ Prediksi | Gram-negatif | Gram-positif |
+|---|---:|---:|
+| Gram-negatif | 1.649 | 90 |
+| Gram-positif | 78 | 1.661 |
 
-Secara keseluruhan, confusion matrix model [Nama Model] menunjukkan kecenderungan [...]. Hasil ini dapat digunakan untuk mengevaluasi sensitivitas model terhadap kelas Gram-positif dan spesifisitas model terhadap kelas Gram-negatif.
+![Confusion Matrix ResNet50](../images/resnet50_confusion_matrix.png)
+
+Catatan: Hasil pada Tabel 4.X.2 di atas berasal dari evaluasi tambahan (pelengkap) model ResNet50 hasil fine-tuning pada data validasi sebanyak 3.478 citra (1.739 Gram-negatif dan 1.739 Gram-positif), terpisah dari pengujian 10 citra pada Tabel 4.10. Evaluasi ini bertujuan memberikan gambaran performa model pada data dalam jumlah lebih besar.
+
+### Analisis Confusion Matrix Model ResNet50 (Hasil Evaluasi)
+
+Model ResNet50 menghasilkan nilai TN sebesar 1.649, FP sebesar 90, FN sebesar 78, dan TP sebesar 1.661. Berdasarkan distribusi tersebut, model menunjukkan kemampuan yang baik dalam membedakan kelas Gram-negatif dan Gram-positif, dengan total kesalahan klasifikasi hanya 168 dari 3.478 citra (akurasi 95,17%).
+
+Kesalahan prediksi paling dominan terjadi pada FP (90 citra), yaitu ketika model memprediksi citra Gram-negatif sebagai Gram-positif, sedikit lebih banyak dibandingkan FN (78 citra) di mana citra Gram-positif diprediksi sebagai Gram-negatif. Kondisi ini menunjukkan bahwa model sedikit lebih sering salah pada citra Gram-negatif dengan karakteristik visual yang menyerupai Gram-positif.
+
+Nilai FP (90) sedikit lebih tinggi dibandingkan FN (78), sehingga model memiliki kecenderungan kecil untuk salah mengklasifikasikan citra Gram-negatif sebagai Gram-positif. Namun demikian, recall kelas Gram-positif (sensitivity = TP/(TP+FN) = 1.661/1.739 = 0,9551) dan recall kelas Gram-negatif (specificity = TN/(TN+FP) = 1.649/1.739 = 0,9482) berada pada rentang yang berdekatan, sehingga model tidak menunjukkan bias signifikan terhadap salah satu kelas.
+
+Secara keseluruhan, confusion matrix model ResNet50 menunjukkan kecenderungan kinerja yang seimbang antara kedua kelas dengan tingkat kesalahan yang relatif kecil (4,83%). Nilai ROC-AUC sebesar 0,9883 turut mengonfirmasi bahwa model memiliki kemampuan pemisahan kelas yang sangat baik.
+
+*Tabel 4.X.3 Confusion Matrix Model ResNet101*
+
+| Aktual \ Prediksi | Gram-negatif | Gram-positif |
+|---|---:|---:|
+| Gram-negatif | 1.672 | 67 |
+| Gram-positif | 102 | 1.637 |
+
+*Tabel 4.X.4 Confusion Matrix Model EfficientNet-B0*
+
+| Aktual \ Prediksi | Gram-negatif | Gram-positif |
+|---|---:|---:|
+| Gram-negatif | 1.638 | 101 |
+| Gram-positif | 209 | 1.530 |
+
+*Tabel 4.X.5 Confusion Matrix Model EfficientNet-B3*
+
+| Aktual \ Prediksi | Gram-negatif | Gram-positif |
+|---|---:|---:|
+| Gram-negatif | 1.195 | 181 |
+| Gram-positif | 55 | 343 |
+
+*Tabel 4.X.6 Confusion Matrix Model VGG-16*
+
+| Aktual \ Prediksi | Gram-negatif | Gram-positif |
+|---|---:|---:|
+| Gram-negatif | 2.509 | 119 |
+| Gram-positif | 61 | 1.150 |
+
+*Tabel 4.X.7 Confusion Matrix Model VGG-19*
+
+| Aktual \ Prediksi | Gram-negatif | Gram-positif |
+|---|---:|---:|
+| Gram-negatif | 2.524 | 104 |
+| Gram-positif | 64 | 1.147 |
+
+*Tabel 4.X.8 Confusion Matrix Model DenseNet121*
+
+| Aktual \ Prediksi | Gram-negatif | Gram-positif |
+|---|---:|---:|
+| Gram-negatif | 1.573 | 166 |
+| Gram-positif | 291 | 1.450 |
+
+Analisis confusion matrix untuk setiap arsitektur telah dijabarkan pada subbagian hasil pelatihan masing-masing model. Secara umum, nilai FP menunjukkan kesalahan ketika citra Gram-negatif diprediksi sebagai Gram-positif, sedangkan nilai FN menunjukkan kesalahan ketika citra Gram-positif diprediksi sebagai Gram-negatif. Pola FP dan FN ini digunakan untuk melihat kecenderungan bias model terhadap salah satu kelas.
 
 ## Metrik Evaluasi Berdasarkan Confusion Matrix
 
@@ -698,9 +903,28 @@ Analisis loss dilakukan dengan membandingkan train loss dan validation loss sela
 - Jika train loss dan validation loss sama-sama menurun secara stabil, proses pelatihan berjalan baik.
 - Jika validation loss stagnan sementara train loss terus turun, model mulai terlalu menyesuaikan diri terhadap data latih.
 
-Template analisis loss yang dapat digunakan setelah kurva loss tersedia adalah sebagai berikut:
+*Tabel 4.Y Ringkasan Loss per Arsitektur*
 
-Model [Nama Model] menunjukkan train loss sebesar [...] dan validation loss sebesar [...] pada akhir pelatihan. Pola perubahan loss menunjukkan bahwa model mengalami [konvergensi stabil/overfitting/underfitting]. Jika dibandingkan dengan akurasi dan confusion matrix, nilai loss ini menunjukkan bahwa model [mampu/belum mampu] mempelajari fitur pembeda antara Gram-negatif dan Gram-positif secara konsisten.
+| Arsitektur | Best Epoch | Train Loss | Validation Loss | Status (Konvergen/Overfitting/Underfitting) |
+|---|---:|---:|---:|---|
+| Simple CNN | Belum tersedia | Belum tersedia | Belum tersedia | Belum tersedia |
+| ResNet50 | 31 | 0,1054 | 0,1466 | Konvergen (indikasi mild overfitting setelah epoch ke-31) |
+| ResNet101 | 60 | 0,0496 | 0,1867 | Konvergen, tetapi terdapat indikasi overfitting karena selisih train loss dan validation loss cukup besar |
+| EfficientNet-B0 | 34 | 0,1713 | 0,2389 | Konvergen cukup stabil |
+| EfficientNet-B3 | 15 | 0,3304 | 0,2678 | Konvergen, tetapi performa validasi belum optimal dibanding model lain |
+| VGG-16 | 20 | 0,1664 | 0,1286 | Konvergen dengan performa validasi tinggi |
+| VGG-19 | 29 | 0,1513 | 0,1241 | Konvergen dengan performa validasi paling tinggi pada ringkasan eksperimen |
+| DenseNet121 | 2 | 0,4002 | 0,3044 | Konvergen awal, tetapi masih perlu eksplorasi epoch dan fine-tuning lebih lanjut |
+
+Ringkasan loss pada Tabel 4.Y menunjukkan bahwa model dengan akurasi tinggi umumnya memiliki validation loss yang rendah. ResNet101 memiliki train loss paling rendah, tetapi selisihnya terhadap validation loss lebih besar sehingga indikasi overfitting lebih kuat. VGG-16 dan VGG-19 menunjukkan validation loss rendah dan performa validasi tinggi, sedangkan DenseNet121 masih memerlukan eksplorasi pelatihan lanjutan karena checkpoint terbaik muncul sangat awal.
+
+### Analisis Loss Model ResNet50 (Hasil Evaluasi)
+
+![Training Curves ResNet50](../images/resnet50_training_curves.png)
+
+Model ResNet50 menunjukkan train loss sebesar 0,1054 dan validation loss sebesar 0,1466 pada epoch terbaik (epoch ke-31, fase fine-tuning). Pada grafik loss, train loss dan validation loss menurun bersama secara stabil hingga sekitar epoch ke-15 dan kemudian konvergen di kisaran 0,14-0,17. Setelah epoch ke-31, train loss terus menurun hingga sekitar 0,07-0,08 pada epoch ke-37-39, sedangkan validation loss relatif stagnan atau sedikit naik. Pola ini menunjukkan model mengalami konvergensi yang baik dengan indikasi mild overfitting pada epoch-epoch akhir, sehingga pemilihan checkpoint terbaik pada epoch ke-31 (berdasarkan macro F1-score validasi tertinggi) tepat digunakan untuk menghindari overfitting lebih lanjut.
+
+Jika dibandingkan dengan confusion matrix pada Tabel 4.X.2 (akurasi 95,17%, macro F1-score 0,9517, ROC-AUC 0,9883), nilai loss ini menunjukkan bahwa model mampu mempelajari fitur pembeda antara Gram-negatif dan Gram-positif secara konsisten, dengan tingkat kesalahan yang kecil dan seimbang pada kedua kelas.
 
 Visualisasi
 

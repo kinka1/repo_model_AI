@@ -24,7 +24,7 @@ Berdasarkan permasalahan yang telah diidentifikasi, maka rumusan masalah dalam p
 
 Bagaimana membangun sistem otomatis yang mampu mengklasifikasikan bakteri Gram-positif dan Gram-negatif berdasarkan citra mikroskopis?
 
-Bagaimana penerapan metode Convolutional Neural Network (CNN) dapat mengurangi variabilitas interpretasi mikroskopis antar dokter dalam proses klasifikasi bakteri Gram?:
+Bagaimana penerapan metode Convolutional Neural Network (CNN) dapat mengurangi variabilitas interpretasi mikroskopis antar dokter dalam proses klasifikasi bakteri Gram?
 
 1.4 TUJUAN
 
@@ -59,4 +59,8 @@ Manfaat yang diharapkan meliputi peningkatan efisiensi laboratorium, akurasi dia
 Bab ini membahas teori-teori yang digunakan sebagai dasar dan landasan dalam penelitian. Teori-teori yang dikaji meliputi konsep dasar bakteri Gram-positif dan Gram-negatif, prinsip pewarnaan Gram, dasar-dasar citra digital, serta teori tentang Convolutional Neural Network (CNN), klasifikasi citra, dan penelitian terdahulu yang relevan.
 
 Pada bab ini dijelaskan perancangan sistem deteksi otomatis bakteri Gram menggunakan CNN. Bab ini mencakup deskripsi permasalahan yang akan diselesaikan, arsitektur sistem, tahapan pengolahan data seperti pra-proses citra, pelatihan model CNN, validasi dan evaluasi hasil klasifikasi, serta perancangan alur kerja sistem secara menyeluruh.
+
+Bab ini membahas pelaksanaan eksperimen dan analisis hasil klasifikasi bakteri Gram menggunakan model CNN yang telah dirancang. Bab ini mencakup parameter eksperimen, karakteristik data, skenario uji coba, hasil pengujian setiap skenario, serta analisis performa model berdasarkan akurasi dan metrik evaluasi lainnya.
+
+Bab ini berisi kesimpulan dari hasil penelitian dan pengembangan sistem deteksi otomatis bakteri Gram berbasis CNN, serta saran untuk pengembangan dan penelitian lebih lanjut.
 
