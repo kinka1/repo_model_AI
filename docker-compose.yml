@@ -1,0 +1,24 @@
+services:
+  postgres:
+    image: postgres:14-alpine
+    container_name: ta-kita-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: "TA KITA"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database_schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    networks:
+      - bacteria-network
+    restart: unless-stopped
+
+networks:
+  bacteria-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
