@@ -9,11 +9,13 @@ from app.database import get_db
 from app.models import Classification, Patient, Specimen, User
 from app.schemas import (
     MedicalReportResponse,
+    ReportClassificationDetail,
     ReportClinicalData,
     ReportEvidenceImage,
     ReportPatientData,
     ReportResultSummary,
 )
+from app.utils import get_local_now
 
 router = APIRouter(prefix="/api/reports", tags=["Laporan Medis"])
 
@@ -79,27 +81,20 @@ def _abs_url(path: Optional[str], request: Request) -> str:
     if not path:
         return ""
 
-    normalized = path.replace("\\", "/")
+    # Normalize path separator and strip leading slashes
+    normalized = path.replace("\\", "/").lstrip("/")
+
     base_url = str(request.base_url).rstrip("/")
 
-    if normalized.startswith("/"):
-        return f"{base_url}{normalized}"
+    if normalized.startswith("http"):
+        return normalized
 
-    if normalized.startswith("static/"):
+    # If it starts with static/ or uploads/, return with leading slash
+    if normalized.startswith("static/") or normalized.startswith("uploads/"):
         return f"{base_url}/{normalized}"
-
-    if normalized.startswith("uploads/"):
-        return f"{base_url}/static/{normalized[len('uploads/'):] }"
-
-    marker = "/uploads/"
-    if marker in normalized:
-        tail = normalized.split(marker, 1)[1]
-        return f"{base_url}/static/{tail}"
-
-    if os.path.isabs(path):
-        return ""
-
-    return f"{base_url}/{normalized}"
+    
+    # Default fallback: assume it's in uploads
+    return f"{base_url}/uploads/{normalized}"
 
 
 @router.get("/specimen/{specimen_id}", response_model=MedicalReportResponse)
@@ -137,14 +132,17 @@ def get_medical_report(specimen_id: int, request: Request, db: Session = Depends
         gram = c.validation_gram or c.classification_gram
         bentuk = _normalize_shape(c.validation_bentuk or c.classification_bentuk)
 
-        if gram == "Positif" and bentuk == "Kokus":
-            gp_kokus += 1
-        elif gram == "Positif" and bentuk == "Batang":
-            gp_batang += 1
-        elif gram == "Negatif" and bentuk == "Kokus":
-            gn_kokus += 1
-        elif gram == "Negatif" and bentuk == "Batang":
-            gn_batang += 1
+        if gram == "Positif":
+            if bentuk == "Batang":
+                gp_batang += 1
+            else:
+                # Kokus or unknown shape (ML only predicts gram, not shape)
+                gp_kokus += 1
+        elif gram == "Negatif":
+            if bentuk == "Batang":
+                gn_batang += 1
+            else:
+                gn_kokus += 1
 
     summary = ReportResultSummary(
         total_objek=len(classifications),
@@ -167,14 +165,31 @@ def get_medical_report(specimen_id: int, request: Request, db: Session = Depends
         for c in classifications
     ]
 
+    classification_details = [
+        ReportClassificationDetail(
+            id=c.id,
+            roi_bbox=c.roi_bbox,
+            classification_gram=c.classification_gram,
+            classification_bentuk=c.classification_bentuk,
+            validation_gram=c.validation_gram,
+            validation_bentuk=c.validation_bentuk,
+            image_url=_abs_url(c.image_path, request),
+            label=f"Gram {c.validation_gram or c.classification_gram}, Bentuk {_normalize_shape(c.validation_bentuk or c.classification_bentuk)}",
+        )
+        for c in classifications
+    ]
+
     personnel = _resolve_doctor_and_analyst(classifications, db)
+
+    validator_name = _get_user_name(specimen.validated_by_user_id, db)
 
     return MedicalReportResponse(
         id_laporan=str(specimen.id),
-        tanggal_cetak=datetime.utcnow(),
+        tanggal_cetak=get_local_now(),
         specimen_id=specimen.id,
         pasien=ReportPatientData(
             id_pasien=patient.id_pasien,
+            nik=patient.nik,
             nama=patient.nama_lengkap,
             tanggal_lahir=patient.tanggal_lahir,
             umur=_calculate_age(patient.tanggal_lahir),
@@ -182,9 +197,24 @@ def get_medical_report(specimen_id: int, request: Request, db: Session = Depends
         ),
         data_klinis=ReportClinicalData(
             tanggal_sampel=specimen.uploaded_at,
+            jenis_spesimen=specimen.specimen_type or "Pewarnaan Gram",
+            accession_number=specimen.accession_number,
+            doctor_sender=specimen.doctor_sender,
+            clinical_diagnosis=specimen.clinical_diagnosis,
+            collected_at=specimen.collected_at,
+            received_at=specimen.received_at,
+            microscope_type=specimen.microscope_type,
+            magnification=specimen.magnification,
+            image_resolution=specimen.image_resolution,
+            analyst_note=specimen.analyst_note,
+            validation_status=specimen.validation_status,
+            validated_at=specimen.validated_at,
+            validator=validator_name,
             analis=personnel["analis"],
             dokter=personnel["dokter"],
         ),
         ringkasan_hasil=summary,
         gambar_bukti=evidence_images,
+        main_image_url=_abs_url(specimen.file_path, request),
+        classifications=classification_details,
     )

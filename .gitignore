@@ -55,14 +55,25 @@ test_model/
 *.db
 *.sqlite3
 
-# Models
-models/
-!models/
-!models/*.pt
-!models/*.weights
-!models/*.h5
+# Models (except test/ and yolo_sample_test/ folders needed for benchmarking)
+models/*
+!models/test/
+!models/yolo_sample_test/
 
 static/*
+
+# Documentation
+doc/
+
+# Frontend
+frontend/
+
+# SQL Dumps
+*.sql
+
+# System / IDE / Scratch
+.commandcode/
+_check_router.py
 
 # OS generated files
 .DS_Store

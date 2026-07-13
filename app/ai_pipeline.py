@@ -10,9 +10,8 @@ except ImportError:
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Default YOLO Model Path provided by the user
-# Normally placed in env vars, but hardcoded as per the user's specific workflow path
-YOLO_MODEL_PATH = Path(os.environ.get("YOLO_MODEL_PATH", r".\models\best_yolo.pt"))
+# YOLO Model Path configuration via environment variables
+YOLO_MODEL_PATH = Path(os.environ.get("YOLO_MODEL_PATH", r"models\best_yolo.pt"))
 
 YOLO_MODEL = None
 YOLO_LOADED = False

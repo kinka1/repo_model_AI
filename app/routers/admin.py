@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -7,10 +8,11 @@ import sys
 import threading
 import time
 from datetime import datetime
+from typing import Optional
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -23,9 +25,16 @@ from app.models import (
     User,
 )
 from app.schemas import (
+    BenchmarkResponse,
+    YoloBenchmarkAllResponse,
+    YoloBenchmarkResponse,
+    ModelUploadResponse,
+    ModelUploadResponse,
+    BenchmarkResponse,
     ActiveModelResponse,
     AIModelSummaryResponse,
     BestModelResponse,
+    MessageResponse,
     PaginatedResponse,
     RetrainConfigResponse,
     RetrainConfigUpdateRequest,
@@ -38,7 +47,7 @@ from app.schemas import (
     UserResponseSchema,
     UserUpdateRequest,
 )
-from app.utils import paginate_query
+from app.utils import paginate_query, get_local_now
 
 
 router = APIRouter(prefix="/api/admin", tags=["Admin Management"])
@@ -46,54 +55,177 @@ router = APIRouter(prefix="/api/admin", tags=["Admin Management"])
 VALID_ROLES = ["Admin", "Analis", "Dokter"]
 ROLE_MAP = {role.lower(): role for role in VALID_ROLES}
 ROOT_DIR = Path(__file__).resolve().parents[2]
+
+@router.get("/models/trend")
+def get_trend_data(
+    period: str = Query("daily", description="Periode: daily, weekly, monthly, yearly"),
+    days: int = Query(30, description="Jumlah hari untuk distribusi confidence"),
+    db: Session = Depends(get_db),
+):
+    """Ambil data distribusi confidence model & drift untuk admin.
+    
+    Menggantikan chart tren Gram Positif/Negatif yang tidak relevan secara klinis
+    dengan visualisasi distribusi confidence dan pergeseran (drift) performa model.
+    """
+    from datetime import date, timedelta
+    from sqlalchemy import case
+    from app.utils import get_local_now
+
+    now = get_local_now()
+    today = now.date()
+
+    # --- CONFIDENCE DISTRIBUTION: Current Period (last `days` days) ---
+    current_start = today - timedelta(days=days)
+    current_end = today
+
+    def _get_confidence_distribution(start_date, end_date):
+        rows = (
+            db.query(
+                case(
+                    (Classification.confidence_score >= 0.9, "90-100%"),
+                    (Classification.confidence_score >= 0.8, "80-90%"),
+                    (Classification.confidence_score >= 0.7, "70-80%"),
+                    else_="< 70%",
+                ).label("range"),
+                func.count().label("count"),
+            )
+            .filter(Classification.confidence_score.isnot(None))
+            .filter(Classification.classified_at.isnot(None))
+            .filter(func.date(Classification.classified_at) >= start_date)
+            .filter(func.date(Classification.classified_at) <= end_date)
+            .group_by("range")
+            .all()
+        )
+
+        conf_map = {"90-100%": 0, "80-90%": 0, "70-80%": 0, "< 70%": 0}
+        for row in rows:
+            conf_map[row.range] = row.count
+
+        total = sum(conf_map.values()) or 1  # Avoid division by zero
+        return [
+            {
+                "range": r,
+                "count": conf_map[r],
+                "percentage": round((conf_map[r] / total) * 100, 1),
+            }
+            for r in ["90-100%", "80-90%", "70-80%", "< 70%"]
+        ]
+
+    confidence_current = _get_confidence_distribution(current_start, current_end)
+    confidence_previous = _get_confidence_distribution(
+        current_start - timedelta(days=days),
+        current_start - timedelta(days=1),
+    )
+
+    # --- DRIFT CALCULATION ---
+    drift = {}
+    for curr, prev in zip(confidence_current, confidence_previous):
+        drift[curr["range"]] = {
+            "delta_count": curr["count"] - prev["count"],
+            "delta_percentage": round(curr["percentage"] - prev["percentage"], 1),
+        }
+
+    # --- ACCURACY TREND ---
+    def _get_avg_accuracy(start_date, end_date):
+        result = (
+            db.query(func.avg(Classification.confidence_score))
+            .filter(Classification.confidence_score.isnot(None))
+            .filter(Classification.classified_at.isnot(None))
+            .filter(func.date(Classification.classified_at) >= start_date)
+            .filter(func.date(Classification.classified_at) <= end_date)
+            .scalar()
+        )
+        return round(float(result), 4) if result else 0.0
+
+    avg_confidence_current = _get_avg_confidence(current_start, current_end, db)
+    avg_confidence_previous = _get_avg_confidence(
+        current_start - timedelta(days=days),
+        current_start - timedelta(days=1),
+        db,
+    )
+
+    total_current = sum(c["count"] for c in confidence_current)
+    total_previous = sum(c["count"] for c in confidence_previous)
+
+    # --- DRIFT DIRECTION ---
+    low_conf_current = confidence_current[2]["percentage"] + confidence_current[3]["percentage"]
+    low_conf_previous = confidence_previous[2]["percentage"] + confidence_previous[3]["percentage"]
+
+    if low_conf_current < low_conf_previous - 2:
+        drift_direction = "membaik"
+    elif low_conf_current > low_conf_previous + 2:
+        drift_direction = "menurun"
+    else:
+        drift_direction = "stabil"
+
+    return {
+        "confidence_current": confidence_current,
+        "confidence_previous": confidence_previous,
+        "drift": drift,
+        "summary": {
+            "total_classifications_current": total_current,
+            "total_classifications_previous": total_previous,
+            "avg_confidence_current": avg_confidence_current,
+            "avg_confidence_previous": avg_confidence_previous,
+            "drift_direction": drift_direction,
+            "period_days": days,
+        },
+    }
+
+
+def _get_avg_confidence(start_date, end_date, session: Session):
+    """Helper to get average confidence score for a date range."""
+    result = (
+        session.query(func.avg(Classification.confidence_score))
+        .filter(Classification.confidence_score.isnot(None))
+        .filter(Classification.classified_at.isnot(None))
+        .filter(func.date(Classification.classified_at) >= start_date)
+        .filter(func.date(Classification.classified_at) <= end_date)
+        .scalar()
+    )
+    return round(float(result), 4) if result else 0.0
+
+
 TRAINING_DATA_DIR = ROOT_DIR / "data" / "retrain"
 TRAINING_DATA_TRAIN = TRAINING_DATA_DIR / "train"
 TRAINING_DATA_VAL = TRAINING_DATA_DIR / "val"
 DEFAULT_BASE_DATA_DIR = ROOT_DIR / "data" / "processed"
-MODEL_PATH_BY_KEY = {
-    "resnet50": ROOT_DIR / "models" / "best_model_resnet50.pth",
-    "resnet101": ROOT_DIR / "models" / "best_model_resnet101.pth",
-    "efficientnet_b0": ROOT_DIR / "models" / "best_model_efficientnet_b0.pth",
-    "efficientnet_b3": ROOT_DIR / "models" / "best_model_efficientnet_b3.pth",
-    "densenet121": ROOT_DIR / "models" / "best_model_densenet121.pth",
-}
-METRICS_PATH_BY_KEY = {
-    "resnet50": ROOT_DIR / "models" / "metrics_resnet50.json",
-    "resnet101": ROOT_DIR / "models" / "metrics_resnet101.json",
-    "efficientnet_b0": ROOT_DIR / "models" / "metrics_efficientnet_b0.json",
-    "efficientnet_b3": ROOT_DIR / "models" / "metrics_efficientnet_b3.json",
-    "densenet121": ROOT_DIR / "models" / "metrics_densenet121.json",
-}
+UNIFIED_SCRIPT = ROOT_DIR / "train_retrain.py"
 
 MODEL_SCRIPT_MAP = {
     "resnet50": {
-        "script": ROOT_DIR / "train_resnet50_finetune.py",
-        "model_path": MODEL_PATH_BY_KEY["resnet50"],
-        "metrics_path": METRICS_PATH_BY_KEY["resnet50"],
+        "arch": "resnet50",
+        "script": UNIFIED_SCRIPT,
+        "model_path": ROOT_DIR / "models" / "best_model_resnet50.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_resnet50.json",
         "name_prefix": "retrain_resnet50",
     },
     "resnet101": {
-        "script": ROOT_DIR / "train_resnet101_finetune.py",
-        "model_path": MODEL_PATH_BY_KEY["resnet101"],
-        "metrics_path": METRICS_PATH_BY_KEY["resnet101"],
+        "arch": "resnet101",
+        "script": UNIFIED_SCRIPT,
+        "model_path": ROOT_DIR / "models" / "best_model_resnet101.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_resnet101.json",
         "name_prefix": "retrain_resnet101",
     },
     "efficientnet_b0": {
-        "script": ROOT_DIR / "train_efficientnet_b0_finetune.py",
-        "model_path": MODEL_PATH_BY_KEY["efficientnet_b0"],
-        "metrics_path": METRICS_PATH_BY_KEY["efficientnet_b0"],
+        "arch": "efficientnet_b0",
+        "script": UNIFIED_SCRIPT,
+        "model_path": ROOT_DIR / "models" / "best_model_efficientnet_b0.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_efficientnet_b0.json",
         "name_prefix": "retrain_efficientnet_b0",
     },
     "efficientnet_b3": {
-        "script": ROOT_DIR / "train_efficientnet_b3_finetune.py",
-        "model_path": MODEL_PATH_BY_KEY["efficientnet_b3"],
-        "metrics_path": METRICS_PATH_BY_KEY["efficientnet_b3"],
+        "arch": "efficientnet_b3",
+        "script": UNIFIED_SCRIPT,
+        "model_path": ROOT_DIR / "models" / "best_model_efficientnet_b3.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_efficientnet_b3.json",
         "name_prefix": "retrain_efficientnet_b3",
     },
     "densenet121": {
-        "script": ROOT_DIR / "train_densenet121_finetune.py",
-        "model_path": MODEL_PATH_BY_KEY["densenet121"],
-        "metrics_path": METRICS_PATH_BY_KEY["densenet121"],
+        "arch": "densenet121",
+        "script": UNIFIED_SCRIPT,
+        "model_path": ROOT_DIR / "models" / "best_model_densenet121.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_densenet121.json",
         "name_prefix": "retrain_densenet121",
     },
 }
@@ -138,6 +270,8 @@ def _build_model_summary(
         version=model.version,
         accuracy=_decimal_to_float(model.accuracy),
         f1_score=_decimal_to_float(model.f1_score),
+        precision_score=_decimal_to_float(model.precision_score),
+        recall_score=_decimal_to_float(model.recall_score),
         inference_time_s=_decimal_to_float(model.inference_time_s),
         status="active" if model.is_active else "inactive",
         is_active=bool(model.is_active),
@@ -217,8 +351,9 @@ def _label_to_class_dir(gram_label: Optional[str]) -> Optional[str]:
 def _build_retrain_dataset_from_db(db: Session, val_ratio: float = 0.2) -> Dict[str, int]:
     _clear_training_dirs()
 
-    base_train = _copy_dir_images(DEFAULT_BASE_DATA_DIR / "train", TRAINING_DATA_TRAIN)
-    base_val = _copy_dir_images(DEFAULT_BASE_DATA_DIR / "val", TRAINING_DATA_VAL)
+    # Copy base dataset if it exists, otherwise skip gracefully
+    base_train = _copy_dir_images(DEFAULT_BASE_DATA_DIR / "train", TRAINING_DATA_TRAIN) if DEFAULT_BASE_DATA_DIR.exists() else 0
+    base_val = _copy_dir_images(DEFAULT_BASE_DATA_DIR / "val", TRAINING_DATA_VAL) if DEFAULT_BASE_DATA_DIR.exists() else 0
 
     rows = (
         db.query(Classification)
@@ -229,6 +364,8 @@ def _build_retrain_dataset_from_db(db: Session, val_ratio: float = 0.2) -> Dict[
 
     added_train = 0
     added_val = 0
+    # Track per-class counts so each class gets at least 1 val image
+    class_counts = {}
     for idx, row in enumerate(rows, start=1):
         cls_name = _label_to_class_dir(row.validation_gram)
         if not cls_name:
@@ -242,7 +379,11 @@ def _build_retrain_dataset_from_db(db: Session, val_ratio: float = 0.2) -> Dict[
         if not src.exists() or not src.is_file():
             continue
 
-        use_val = (idx % 100) < int(val_ratio * 100)
+        cls_count = class_counts.get(cls_name, 0) + 1
+        class_counts[cls_name] = cls_count
+
+        # Ensure first image of each class goes to val
+        use_val = (idx % 100) < int(val_ratio * 100) or cls_count == 1
         split_dir = TRAINING_DATA_VAL if use_val else TRAINING_DATA_TRAIN
         dst_dir = split_dir / cls_name
         dst_dir.mkdir(parents=True, exist_ok=True)
@@ -309,6 +450,7 @@ def _run_training_job(
     epochs_head: int,
     epochs_ft: int,
     batch_size: int,
+    version_label: Optional[str] = None,
 ) -> None:
     from app.database import SessionLocal
 
@@ -325,6 +467,11 @@ def _run_training_job(
         job = db.query(ModelTrainingStatus).filter(ModelTrainingStatus.id == job_id).first()
         if not job:
             return
+
+        # Generate unique filenames so retrained models don't overwrite pre-trained ones
+        timestamp = get_local_now().strftime('%Y%m%d_%H%M%S')
+        model_output = model_output.parent / f"{model_output.stem}_retrain_{timestamp}{model_output.suffix}"
+        metrics_output = metrics_output.parent / f"{metrics_output.stem}_retrain_{timestamp}{metrics_output.suffix}"
 
         cmd = [
             sys.executable,
@@ -343,8 +490,14 @@ def _run_training_job(
             "--save-metrics",
             str(metrics_output),
             "--name",
-            f"{name_prefix}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}",
+            f"{name_prefix}_{get_local_now().strftime('%Y%m%d_%H%M%S')}",
+            "--arch",
+            name_prefix.replace("retrain_", ""),
         ]
+
+        print(f"\n[RETRAIN #{job_id}] Starting training...")
+        print(f"[RETRAIN #{job_id}] CWD: {ROOT_DIR}")
+        print(f"[RETRAIN #{job_id}] CMD: {' '.join(cmd)}")
 
         proc = subprocess.Popen(
             cmd,
@@ -369,6 +522,7 @@ def _run_training_job(
             for line in proc.stdout:
                 text_line = line.strip()
                 if text_line:
+                    print(f"[RETRAIN #{job_id}] {text_line}")
                     logs.append(text_line)
                     if len(logs) > 40:
                         logs = logs[-40:]
@@ -391,24 +545,105 @@ def _run_training_job(
 
         ret = proc.wait()
 
-        job.end_time = datetime.utcnow()
+        job.end_time = get_local_now()
         job.progress = 100.0
 
         if ret == 0:
             job.status = "COMPLETED"
             job.error_message = "\n".join(logs[-20:]) if logs else "Training completed"
+            _save_job_state()
+            print(f"[RETRAIN #{job_id}] ✅ COMPLETED — exit code {ret}")
+
+            # Insert new model version + run benchmark
+            try:
+                from app.main import benchmark_model
+
+                model_row = db.query(AIModel).filter(AIModel.id == job.model_id).first()
+                base_name = model_row.model_name if model_row else "retrained"
+
+                # ---- Auto-versioning ----
+                # Find existing versions for this model, parse semver (vMAJOR.MINOR)
+                existing = (
+                    db.query(AIModel.version)
+                    .filter(AIModel.model_name == base_name)
+                    .all()
+                )
+                latest_major = 0
+                latest_minor = 0
+                for (ver,) in existing:
+                    m = re.match(r"v?(\d+)\.(\d+)", str(ver or ""))
+                    if m:
+                        major = int(m.group(1))
+                        minor = int(m.group(2))
+                        if major > latest_major or (major == latest_major and minor > latest_minor):
+                            latest_major = major
+                            latest_minor = minor
+
+                if version_label:
+                    # Minor bump: v1.0 → v1.1
+                    new_version = f"v{latest_major}.{latest_minor + 1}" if latest_major > 0 else "v1.1"
+                else:
+                    # Major bump: v1.0 → v2.0
+                    new_version = f"v{latest_major + 1}.0" if latest_major > 0 else "v1.0"
+
+                new_model = AIModel(
+                    model_name=base_name,
+                    model_type=model_row.model_type if model_row else "Gram Classification",
+                    version=new_version,
+                    model_file_path=str(model_output),
+                    is_active=False,
+                )
+                db.add(new_model)
+                db.flush()
+
+                # Try to load and benchmark the new model
+                from app.main import load_all_models as reload_models
+                from app.main import MODEL_REGISTRY, MODELS, MODELS_LOADED, DEVICE, _load_state_dict
+
+                config = MODEL_REGISTRY.get(base_name)
+                if config and model_output.exists():
+                    try:
+                        model_instance = config["class"]().to(DEVICE)
+                        sd = _load_state_dict(model_output)
+                        model_instance.load_state_dict(sd, strict=True)
+                        model_instance.eval()
+                        MODELS[base_name] = model_instance
+                        MODELS_LOADED[base_name] = True
+
+                        test_path = os.environ.get("TEST_DATA_PATH")
+                        if test_path and Path(test_path).exists():
+                            metrics = benchmark_model(base_name, test_path)
+                            new_model.accuracy = metrics["accuracy"]
+                            new_model.precision_score = metrics["precision"]
+                            new_model.recall_score = metrics["recall"]
+                            new_model.f1_score = metrics["f1"]
+                            new_model.inference_time_s = metrics["inference_time_s"]
+                            job.error_message = (job.error_message or "") + f"\nBenchmark: acc={metrics['accuracy']:.4f}, f1={metrics['f1']:.4f}"
+                    except Exception as bench_err:
+                        job.error_message = (job.error_message or "") + f"\nBenchmark failed: {bench_err}"
+                    finally:
+                        db.add(new_model)
+                        db.flush()
+                        _save_job_state()
+            except Exception as seed_err:
+                job.error_message = (job.error_message or "") + f"\nPost-train seeding failed: {seed_err}"
+                _save_job_state()
         else:
             job.status = "FAILED"
             job.error_message = "\n".join(logs[-20:]) if logs else "Training failed"
-
-        _save_job_state()
+            _save_job_state()
+            print(f"[RETRAIN #{job_id}] ❌ FAILED — exit code {ret}")
+            print(f"[RETRAIN #{job_id}] Last logs:\n{job.error_message}")
     except Exception as exc:
+        print(f"[RETRAIN #{job_id}] ❌ EXCEPTION: {exc}")
+        import traceback
+        traceback.print_exc()
         db.rollback()
         job = db.query(ModelTrainingStatus).filter(ModelTrainingStatus.id == job_id).first()
         if job:
             try:
                 job.status = "FAILED"
-                job.end_time = datetime.utcnow()
+                job.end_time = get_local_now()
                 job.error_message = f"Retrain exception: {exc}"
                 db.add(job)
                 db.commit()
@@ -723,6 +958,36 @@ def get_training_jobs(
     return PaginatedResponse[TrainingJobResponse](data=responses, meta=meta)
 
 
+@router.patch("/models/training-jobs/{job_id}/cancel", response_model=MessageResponse)
+def cancel_training_job(job_id: int, db: Session = Depends(get_db)):
+    job = db.query(ModelTrainingStatus).filter(ModelTrainingStatus.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Training job tidak ditemukan")
+
+    if job.status != "TRAINING":
+        raise HTTPException(status_code=400, detail=f"Job status is '{job.status}', only TRAINING jobs can be cancelled")
+
+    job.status = "CANCELLED"
+    job.progress = 0.0
+    job.end_time = get_local_now()
+    job.error_message = "Cancelled by user"
+    db.add(job)
+    db.commit()
+
+    return MessageResponse(message=f"Training job #{job_id} berhasil dibatalkan.")
+
+
+@router.delete("/models/training-jobs/{job_id}", response_model=MessageResponse)
+def delete_training_job(job_id: int, db: Session = Depends(get_db)):
+    job = db.query(ModelTrainingStatus).filter(ModelTrainingStatus.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Training job tidak ditemukan")
+
+    db.delete(job)
+    db.commit()
+    return MessageResponse(message=f"Training job #{job_id} berhasil dihapus.")
+
+
 @router.post("/models/retrain", response_model=RetrainStartResponse)
 def start_retrain(payload: RetrainStartRequest, db: Session = Depends(get_db)):
     model = db.query(AIModel).filter(AIModel.id == payload.model_id).first()
@@ -743,6 +1008,7 @@ def start_retrain(payload: RetrainStartRequest, db: Session = Depends(get_db)):
     script_conf = _resolve_training_script(model)
 
     stats = _build_retrain_dataset_from_db(db, val_ratio=float(payload.val_ratio_crops or 0.2))
+    print(f"[RETRAIN] Dataset: train={stats['total_train']} (base={stats['base_train']}, crop={stats['crop_train']}), val={stats['total_val']} (base={stats['base_val']}, crop={stats['crop_val']})")
     if stats["total_train"] == 0 or stats["total_val"] == 0:
         raise HTTPException(
             status_code=400,
@@ -753,7 +1019,7 @@ def start_retrain(payload: RetrainStartRequest, db: Session = Depends(get_db)):
         model_id=model.id,
         status="TRAINING",
         progress=0.0,
-        start_time=datetime.utcnow(),
+        start_time=get_local_now(),
         current_epoch=0,
         total_epochs=int((payload.epochs_head or 10) + (payload.epochs_ft or 30)),
         error_message=(
@@ -776,6 +1042,7 @@ def start_retrain(payload: RetrainStartRequest, db: Session = Depends(get_db)):
             "epochs_head": int(payload.epochs_head or 10),
             "epochs_ft": int(payload.epochs_ft or 30),
             "batch_size": int(payload.batch_size or 32),
+            "version_label": payload.version_label,
         },
         daemon=True,
     )
@@ -789,6 +1056,322 @@ def start_retrain(payload: RetrainStartRequest, db: Session = Depends(get_db)):
             f"Dataset train={stats['total_train']} | val={stats['total_val']}."
         ),
     )
+
+
+@router.patch("/models/{model_id}/activate", response_model=MessageResponse)
+def activate_model(model_id: int, db: Session = Depends(get_db)):
+    model = db.query(AIModel).filter(AIModel.id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model tidak ditemukan")
+
+    # Deactivate all other models of the same task type
+    db.query(AIModel).filter(
+        AIModel.model_type == model.model_type,
+        AIModel.id != model_id,
+    ).update({"is_active": False}, synchronize_session=False)
+
+    # Activate the selected model
+    model.is_active = True
+    db.commit()
+
+    return MessageResponse(message=f"Model {model.model_name} v{model.version} berhasil diaktifkan.")
+
+
+
+
+@router.post("/models/benchmark-all", response_model=MessageResponse)
+def benchmark_all_models(
+    test_data_path: Optional[str] = Query(None),
+    sample_count: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Run benchmark on ALL classification models and update their metrics in the DB."""
+    from app.main import benchmark_model
+
+    models = db.query(AIModel).filter(AIModel.model_type != "Detection").all()
+    if not models:
+        return MessageResponse(message="Tidak ada model klasifikasi yang terdaftar.")
+
+    test_path = test_data_path or os.environ.get("TEST_DATA_PATH")
+    if not test_path or not Path(test_path).exists():
+        raise HTTPException(status_code=400, detail="TEST_DATA_PATH tidak ditemukan. Pastikan folder test tersedia.")
+
+    results = []
+    errors = []
+    for m in models:
+        try:
+            metrics = benchmark_model(m.model_name, test_data_path=test_path, sample_count=sample_count)
+            m.accuracy = metrics["accuracy"]
+            m.precision_score = metrics["precision"]
+            m.recall_score = metrics["recall"]
+            m.f1_score = metrics["f1"]
+            m.inference_time_s = metrics["inference_time_s"]
+            db.add(m)
+            results.append(f"{m.model_name}: acc={metrics['accuracy']:.4f}, f1={metrics['f1']:.4f}")
+        except Exception as e:
+            errors.append(f"{m.model_name}: {e}")
+
+    db.commit()
+
+    msg = f"Berhasil benchmark {len(results)} model."
+    if errors:
+        msg += f" Gagal: {len(errors)} ({'; '.join(errors[:3])})"
+    return MessageResponse(message=msg)
+
+@router.post("/models/benchmark-active", response_model=BenchmarkResponse)
+def benchmark_active_model(
+    test_data_path: Optional[str] = Query(None),
+    sample_count: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Benchmark model klasifikasi yang sedang aktif."""
+    from app.main import benchmark_model
+
+    active = db.query(AIModel).filter(AIModel.model_type != "Detection", AIModel.is_active.is_(True)).first()
+    if not active:
+        raise HTTPException(status_code=404, detail="Tidak ada model klasifikasi aktif.")
+
+    test_path = test_data_path or os.environ.get("TEST_DATA_PATH")
+    if not test_path or not Path(test_path).exists():
+        raise HTTPException(status_code=400, detail="TEST_DATA_PATH tidak ditemukan.")
+
+    metrics = benchmark_model(
+        active.model_name,
+        test_data_path=test_path,
+        sample_count=sample_count,
+    )
+    active.accuracy = metrics["accuracy"]
+    active.precision_score = metrics["precision"]
+    active.recall_score = metrics["recall"]
+    active.f1_score = metrics["f1"]
+    active.inference_time_s = metrics["inference_time_s"]
+    db.add(active)
+    db.commit()
+
+    return BenchmarkResponse(
+        model_id=active.id,
+        model_name=active.model_name,
+        accuracy=metrics["accuracy"],
+        precision=metrics["precision"],
+        recall=metrics["recall"],
+        f1=metrics["f1"],
+        inference_time_s=metrics["inference_time_s"],
+        num_samples=metrics["num_samples"],
+    )
+
+
+
+@router.post("/models/{model_id}/benchmark", response_model=BenchmarkResponse)
+def benchmark_single_model(
+    model_id: int,
+    test_data_path: Optional[str] = Query(None),
+    sample_count: Optional[int] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Run benchmark on an existing model and update its metrics in the DB."""
+    from app.main import benchmark_model
+
+    ai_model = db.query(AIModel).filter(AIModel.id == model_id).first()
+    if not ai_model:
+        raise HTTPException(status_code=404, detail="Model tidak ditemukan")
+
+    if ai_model.model_type == "Detection":
+        raise HTTPException(status_code=400, detail="Benchmark hanya tersedia untuk model klasifikasi")
+
+    metrics = benchmark_model(
+        ai_model.model_name,
+        test_data_path=test_data_path,
+        sample_count=sample_count,
+    )
+    ai_model.accuracy = metrics["accuracy"]
+    ai_model.precision_score = metrics["precision"]
+    ai_model.recall_score = metrics["recall"]
+    ai_model.f1_score = metrics["f1"]
+    ai_model.inference_time_s = metrics["inference_time_s"]
+    db.add(ai_model)
+    db.commit()
+
+    return BenchmarkResponse(
+        model_id=ai_model.id,
+        model_name=ai_model.model_name,
+        accuracy=metrics["accuracy"],
+        precision=metrics["precision"],
+        recall=metrics["recall"],
+        f1=metrics["f1"],
+        inference_time_s=metrics["inference_time_s"],
+        num_samples=metrics["num_samples"],
+    )
+
+
+
+
+@router.post("/models/yolo-benchmark", response_model=YoloBenchmarkResponse)
+def benchmark_yolo_model(
+    model_id: Optional[int] = Query(None, description="ID model YOLO yang akan di-benchmark (opsional, default: model aktif)"),
+    test_data_path: Optional[str] = Query(None, description="Path ke dataset YOLO"),
+    db: Session = Depends(get_db),
+):
+    """Benchmark model YOLO (detection) menggunakan ultralytics val."""
+    from app.main import benchmark_yolo
+
+    if model_id:
+        yolo_model = db.query(AIModel).filter(AIModel.id == model_id, AIModel.model_type == "Detection").first()
+        if not yolo_model:
+            raise HTTPException(status_code=404, detail=f"Model deteksi dengan ID {model_id} tidak ditemukan.")
+    else:
+        yolo_model = db.query(AIModel).filter(AIModel.model_type == "Detection", AIModel.is_active.is_(True)).first()
+        if not yolo_model:
+            yolo_model = db.query(AIModel).filter(AIModel.model_type == "Detection").first()
+    if not yolo_model:
+        raise HTTPException(status_code=404, detail="Model deteksi YOLO tidak ditemukan di database.")
+
+    try:
+        model_file = yolo_model.model_file_path if yolo_model.model_file_path else None
+        metrics = benchmark_yolo(test_data_path=test_data_path, model_path=model_file)
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal benchmark YOLO: {e}")
+
+    yolo_model.accuracy = metrics["map50"]
+    yolo_model.precision_score = metrics["precision"]
+    yolo_model.recall_score = metrics["recall"]
+    yolo_model.f1_score = metrics["map50_95"]
+    db.add(yolo_model)
+    db.commit()
+
+    return YoloBenchmarkResponse(
+        model_id=yolo_model.id,
+        model_name=yolo_model.model_name,
+        map50=round(metrics["map50"] * 100, 2),
+        map50_95=round(metrics["map50_95"] * 100, 2),
+        precision=metrics["precision"],
+        recall=metrics["recall"],
+        num_samples=metrics["num_samples"],
+    )
+
+
+
+
+@router.post("/models/yolo-benchmark-all", response_model=YoloBenchmarkAllResponse)
+def benchmark_all_yolo_models(
+    test_data_path: Optional[str] = Query(None, description="Path ke dataset YOLO"),
+    db: Session = Depends(get_db),
+):
+    """Benchmark semua model YOLO (detection) dan update metriknya di DB."""
+    from app.main import benchmark_yolo
+
+    yolo_models = db.query(AIModel).filter(AIModel.model_type == "Detection").all()
+    if not yolo_models:
+        return YoloBenchmarkAllResponse(message="Tidak ada model deteksi YOLO yang terdaftar.")
+
+    results = []
+    errors = []
+    for m in yolo_models:
+        try:
+            model_file = m.model_file_path if m.model_file_path else None
+            metrics = benchmark_yolo(test_data_path=test_data_path, model_path=model_file)
+            m.accuracy = metrics["map50"]
+            m.precision_score = metrics["precision"]
+            m.recall_score = metrics["recall"]
+            m.f1_score = metrics["map50_95"]
+            db.add(m)
+            results.append(YoloBenchmarkResponse(
+                model_id=m.id,
+                model_name=m.model_name,
+                map50=metrics["map50"],
+                map50_95=metrics["map50_95"],
+                precision=metrics["precision"],
+                recall=metrics["recall"],
+                num_samples=metrics["num_samples"],
+            ))
+        except Exception as e:
+            errors.append(f"{m.model_name}: {e}")
+
+    db.commit()
+
+    msg = f"Berhasil benchmark {len(results)} model YOLO."
+    if errors:
+        msg += f" Gagal: {len(errors)}."
+    return YoloBenchmarkAllResponse(results=results, errors=errors, message=msg)
+
+
+@router.post("/models/upload", response_model=ModelUploadResponse)
+async def upload_model(
+    file: UploadFile = File(...),
+    model_name: str = Form(...),
+    model_type: str = Form(...),
+    version: str = Form("1.0"),
+    db: Session = Depends(get_db),
+):
+    """Upload a new model file (.pth for classification, .pt for detection)."""
+    import shutil
+
+    allowed_ext = {".pth", ".pt"}
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in allowed_ext:
+        raise HTTPException(status_code=400, detail=f"Format file tidak didukung. Gunakan: {', '.join(allowed_ext)}")
+
+    models_dir = Path(__file__).resolve().parents[2] / "models"
+    models_dir.mkdir(exist_ok=True)
+
+    safe_name = re.sub(r"[^\w.\-]", "_", file.filename)
+    dest = models_dir / f"uploaded_{int(time.time())}_{safe_name}"
+
+    with open(dest, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    db_model = AIModel(
+        model_name=model_name,
+        model_type=model_type,
+        version=version,
+        model_file_path=str(dest),
+        is_active=False,
+    )
+    db.add(db_model)
+    db.commit()
+    db.refresh(db_model)
+
+    benchmark_msg = ""
+    if model_type != "Detection":
+        try:
+            from app.main import benchmark_model
+            test_path = os.environ.get("TEST_DATA_PATH")
+            if test_path and Path(test_path).exists():
+                metrics = benchmark_model(model_name, test_data_path=test_path)
+                db_model.accuracy = metrics["accuracy"]
+                db_model.precision_score = metrics["precision"]
+                db_model.recall_score = metrics["recall"]
+                db_model.f1_score = metrics["f1"]
+                db_model.inference_time_s = metrics["inference_time_s"]
+                db.add(db_model)
+                db.commit()
+                db.refresh(db_model)
+                benchmark_msg = f" Benchmark: akurasi={metrics['accuracy']:.4f}, f1={metrics['f1']:.4f}."
+        except Exception as bench_err:
+            benchmark_msg = f" Benchmark gagal: {bench_err}"
+
+    return ModelUploadResponse(
+        id=db_model.id,
+        model_name=db_model.model_name,
+        model_type=db_model.model_type,
+        version=db_model.version,
+        model_file_path=db_model.model_file_path,
+        is_active=db_model.is_active,
+        message="Model berhasil diunggah. Aktifkan melalui endpoint aktivasi." + benchmark_msg,
+    )
+
+
+@router.delete("/models/{model_id}", response_model=MessageResponse)
+def delete_model(model_id: int, db: Session = Depends(get_db)):
+    model = db.query(AIModel).filter(AIModel.id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail="Model tidak ditemukan")
+
+    db.delete(model)
+    db.commit()
+
+    return MessageResponse(message=f"Model {model.model_name} v{model.version} berhasil dihapus.")
 
 
 @router.get("/models/retrain/options", response_model=List[RetrainModelOptionResponse])

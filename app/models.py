@@ -2,6 +2,7 @@ from sqlalchemy import Boolean, Column, Integer, String, Float, DateTime, Foreig
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from .database import Base
+from .utils import get_local_now
 
 class User(Base):
     __tablename__ = "users"
@@ -13,8 +14,8 @@ class User(Base):
     full_name = Column(String(100), nullable=False)
     role = Column(String(20), nullable=False) # 'Admin', 'Analis', 'Dokter'
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_local_now)
+    updated_at = Column(DateTime, default=get_local_now, onupdate=get_local_now)
     last_login = Column(DateTime, nullable=True)
 
 class Session(Base):
@@ -25,7 +26,7 @@ class Session(Base):
     token_hash = Column(String(255), unique=True, index=True, nullable=False)
     expires_at = Column(DateTime, nullable=False, index=True)
     is_revoked = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=get_local_now)
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
@@ -39,7 +40,7 @@ class AuditLog(Base):
     new_value = Column(JSON, nullable=True)
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=get_local_now, index=True)
 
 class Dataset(Base):
     __tablename__ = "datasets"
@@ -51,7 +52,7 @@ class Dataset(Base):
     gram_positive_count = Column(Integer, default=0)
     gram_negative_count = Column(Integer, default=0)
     uploaded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=get_local_now)
 
 class AIModel(Base):
     __tablename__ = "ai_models"
@@ -68,8 +69,8 @@ class AIModel(Base):
     inference_time_s = Column(Float, nullable=True)
     is_active = Column(Boolean, default=False, index=True)
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_local_now)
+    updated_at = Column(DateTime, default=get_local_now, onupdate=get_local_now)
 
 
 class PasswordResetToken(Base):
@@ -80,8 +81,8 @@ class PasswordResetToken(Base):
     token_hash = Column(String(255), unique=True, index=True, nullable=False)
     expires_at = Column(DateTime, nullable=False, index=True)
     is_used = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_local_now)
+    updated_at = Column(DateTime, default=get_local_now, onupdate=get_local_now)
 
 class ModelTrainingStatus(Base):
     __tablename__ = "model_training_status"
@@ -97,7 +98,7 @@ class ModelTrainingStatus(Base):
     error_message = Column(Text, nullable=True)
     current_epoch = Column(Integer, nullable=True)
     total_epochs = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=get_local_now)
 
 
 class ModelRetrainConfig(Base):
@@ -107,23 +108,41 @@ class ModelRetrainConfig(Base):
     auto_retrain_enabled = Column(Boolean, default=False, nullable=False)
     trigger_count = Column(Integer, default=500, nullable=False)
     validated_data_since_last_train = Column(Integer, default=0, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_local_now)
+    updated_at = Column(DateTime, default=get_local_now, onupdate=get_local_now)
+
+class InternalMessage(Base):
+    """Thread pesan internal antara Analis dan Dokter untuk keperluan revisi."""
+    __tablename__ = "internal_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    specimen_id = Column(Integer, ForeignKey("specimens.id", ondelete="CASCADE"), nullable=False, index=True)
+    sender_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    message_text = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=get_local_now)
+
+    # Relationships
+    sender = relationship("User", lazy="joined")
+    specimen = relationship("Specimen")
+
 
 class Patient(Base):
     __tablename__ = "patients"
 
     id = Column(Integer, primary_key=True, index=True)
     id_pasien = Column(String(20), unique=True, index=True, nullable=False)
+    nik = Column(String(32), unique=True, index=True, nullable=True)
     nama_lengkap = Column(String(100), index=True, nullable=False)
     jenis_kelamin = Column(String(20), nullable=False) # 'Laki-Laki', 'Perempuan'
     tanggal_lahir = Column(Date, nullable=False)
     alamat = Column(Text, nullable=True)
     no_telepon = Column(String(20), nullable=True)
-    patient_date = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    satusehat_id = Column(String(100), nullable=True)
+    patient_date = Column(DateTime, default=get_local_now, nullable=False, index=True)
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=get_local_now, index=True)
+    updated_at = Column(DateTime, default=get_local_now, onupdate=get_local_now)
 
     # Relationships
     classifications = relationship("Classification", back_populates="patient", cascade="all, delete-orphan")
@@ -139,11 +158,26 @@ class Specimen(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     patient_id = Column(Integer, ForeignKey("patients.id", ondelete="CASCADE"), nullable=False)
+    accession_number = Column(String(255), unique=False, index=True, nullable=True)
+    specimen_type = Column(String(100), nullable=True)
+    doctor_sender = Column(String(100), nullable=True)
+    clinical_diagnosis = Column(Text, nullable=True)
+    collected_at = Column(DateTime, nullable=True)
+    received_at = Column(DateTime, nullable=True)
+
+    microscope_type = Column(String(100), nullable=True)
+    magnification = Column(String(50), nullable=True)
+    image_resolution = Column(String(50), nullable=True)
+    analyst_note = Column(Text, nullable=True)
+
     file_name = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=False)
     status = Column(String(20), default="pending")
+    validation_status = Column(String(20), default="pending")
+    validated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    validated_at = Column(DateTime, nullable=True)
     total_detected = Column(Integer, default=0, nullable=True)
-    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    uploaded_at = Column(DateTime, default=get_local_now)
     
     # Relationship
     patient = relationship("Patient", back_populates="specimens")
@@ -158,6 +192,8 @@ class Classification(Base):
     dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=True)
     image_file_name = Column(String(255), nullable=False)
     image_path = Column(String(500), nullable=False)
+    roi_bbox = Column(JSON, nullable=True)
+    roi_source = Column(String(20), nullable=True)
     classified_by_model_id = Column(Integer, ForeignKey("ai_models.id"), nullable=True, index=True)
     
     classification_gram = Column(String(20), nullable=True)
@@ -173,10 +209,10 @@ class Classification(Base):
     reannotated_at = Column(DateTime, nullable=True)
     
     classified_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    classified_at = Column(DateTime, default=datetime.utcnow, index=True)
+    classified_at = Column(DateTime, default=get_local_now, index=True)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=get_local_now)
+    updated_at = Column(DateTime, default=get_local_now, onupdate=get_local_now)
 
     # Relationships
     patient = relationship("Patient", back_populates="classifications")

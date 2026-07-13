@@ -1,4 +1,5 @@
-from fastapi import FastAPI, File, HTTPException, UploadFile, Query, Response, Request
+from fastapi import FastAPI, File, HTTPException, UploadFile, Query, Response, Request, Depends
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.openapi.utils import get_openapi
@@ -9,9 +10,11 @@ from PIL import Image, UnidentifiedImageError
 import io
 import json
 import os
+import shutil
 import time
 import hashlib
 from datetime import datetime
+from sqlalchemy.orm import Session
 
 import torch
 import torch.nn as nn
@@ -23,7 +26,8 @@ load_dotenv()
 
 from app.database import engine, get_db, SessionLocal
 import app.models as db_models
-from app.routers import patients, analysis, dokter, admin, reports, auth
+from app.routers import patients, analysis, dokter, admin, reports, auth, messages
+from app.utils import get_local_now
 from app.model_architectures import (
     SimpleCNN, 
     GramEfficientNetB0Classifier,
@@ -40,6 +44,22 @@ app = FastAPI(
     description="API untuk klasifikasi bakteri Gram-positif (G+) dan Gram-negatif (G-) dari gambar mikroskopis.",
     version="1.0.0",
 )
+
+# Allow frontend origins to load API responses and images.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", "uploads")).resolve()
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# Serve uploaded specimens/crops. Mount /static for legacy paths.
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
+app.mount("/static", StaticFiles(directory=str(UPLOAD_DIR)), name="static")
 
 AUTH_EXEMPT_PATHS = {
     "/",
@@ -59,6 +79,8 @@ def _is_auth_exempt(path: str) -> bool:
     if path.startswith("/docs") or path.startswith("/redoc"):
         return True
     if path.startswith("/static/"):
+        return True
+    if path.startswith("/uploads/"):
         return True
     return False
 
@@ -101,7 +123,7 @@ async def access_token_middleware(request: Request, call_next):
         if not session:
             return JSONResponse(status_code=401, content={"detail": "Token tidak valid"})
 
-        if session.expires_at < datetime.utcnow():
+        if session.expires_at < get_local_now():
             session.is_revoked = True
             db.add(session)
             db.commit()
@@ -121,12 +143,22 @@ async def access_token_middleware(request: Request, call_next):
 
     return await call_next(request)
 
+
+@app.middleware("http")
+async def add_static_corp_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/uploads/") or request.url.path.startswith("/static/"):
+        response.headers.setdefault("Access-Control-Allow-Origin", "*")
+        response.headers.setdefault("Cross-Origin-Resource-Policy", "cross-origin")
+    return response
+
 app.include_router(patients.router)
 app.include_router(analysis.router)
 app.include_router(dokter.router)
 app.include_router(admin.router)
 app.include_router(reports.router)
 app.include_router(auth.router)
+app.include_router(messages.router)
 
 
 def custom_openapi():
@@ -173,6 +205,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_MODEL_PATH = ROOT_DIR / "models" / "best_model_cnn.pth"
 DEFAULT_METRICS_PATH = ROOT_DIR / "models" / "metrics_summary.json"
 MODEL_PATH = Path(os.environ.get("GRAM_MODEL_PATH", str(DEFAULT_MODEL_PATH)))
+PRODUCTION_MODEL_KEY = os.environ.get("PRODUCTION_MODEL_KEY", "resnet50")
 
 CLASS_LABELS = ["Gram Negative (G-)", "Gram Positive (G+)"]
 INPUT_SIZE = (224, 224)
@@ -182,24 +215,24 @@ MODEL_REGISTRY = {
     "scenario_1": {
         "name": "Simple CNN (From Scratch)",
         "class": SimpleCNN,
-        "path": ROOT_DIR / "experiments" / "scenario_1_simple_cnn_from_zero" / "best_model.pth",
-        "metrics_path": ROOT_DIR / "experiments" / "scenario_1_simple_cnn_from_zero" / "metrics_summary.json",
+        "path": ROOT_DIR / "models" / "best_model_cnn.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_summary.json",
         "scenario": "Scenario 1: Simple CNN trained from scratch",
         "architecture": "SimpleCNN",
     },
     "scenario_2": {
         "name": "Simple CNN (With Augmentation)",
         "class": SimpleCNN,
-        "path": ROOT_DIR / "experiments" / "scenario_2_cnn_augmentation" / "best_model.pth",
-        "metrics_path": ROOT_DIR / "experiments" / "scenario_2_cnn_augmentation" / "metrics_summary.json",
+        "path": ROOT_DIR / "models" / "best_model_cnn.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_summary.json",
         "scenario": "Scenario 2: Simple CNN with data augmentation",
         "architecture": "SimpleCNN",
     },
     "resnet50": {
         "name": "ResNet50 (Transfer Learning + Fine-tuning)",
         "class": GramResNet50Classifier,
-        "path": ROOT_DIR / "experiments" / "scenario_4a_resnet50" / "best_model.pth",
-        "metrics_path": ROOT_DIR / "experiments" / "scenario_4a_resnet50" / "metrics_summary.json",
+        "path": ROOT_DIR / "models" / "best_model_resnet50.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_summary.json",
         "scenario": "Scenario 4a: ResNet50 fine-tuned (BEST MODEL)",
         "architecture": "ResNet50",
         "is_production": True,
@@ -207,24 +240,24 @@ MODEL_REGISTRY = {
     "resnet101": {
         "name": "ResNet101 (Transfer Learning + Fine-tuning)",
         "class": GramResNet101Classifier,
-        "path": ROOT_DIR / "experiments" / "scenario_4b_resnet101" / "best_model.pth",
-        "metrics_path": ROOT_DIR / "experiments" / "scenario_4b_resnet101" / "metrics_summary.json",
+        "path": ROOT_DIR / "models" / "best_model_resnet101.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_summary.json",
         "scenario": "Scenario 4b: ResNet101 fine-tuned",
         "architecture": "ResNet101",
     },
     "vgg16": {
         "name": "VGG16 (Transfer Learning + Fine-tuning)",
         "class": GramVGG16Classifier,
-        "path": ROOT_DIR / "experiments" / "scenario_5a_vgg16" / "best_model.pth",
-        "metrics_path": ROOT_DIR / "experiments" / "scenario_5a_vgg16" / "metrics_summary.json",
+        "path": ROOT_DIR / "models" / "best_model_vgg16.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_summary.json",
         "scenario": "Scenario 5a: VGG16 fine-tuned",
         "architecture": "VGG16",
     },
     "vgg19": {
         "name": "VGG19 (Transfer Learning + Fine-tuning)",
         "class": GramVGG19Classifier,
-        "path": ROOT_DIR / "experiments" / "scenario_5b_vgg19" / "best_model.pth",
-        "metrics_path": ROOT_DIR / "experiments" / "scenario_5b_vgg19" / "metrics_summary.json",
+        "path": ROOT_DIR / "models" / "best_model_vgg19.pth",
+        "metrics_path": ROOT_DIR / "models" / "metrics_summary.json",
         "scenario": "Scenario 5b: VGG19 fine-tuned",
         "architecture": "VGG19",
     },
@@ -232,7 +265,7 @@ MODEL_REGISTRY = {
         "name": "DenseNet121 (Transfer Learning + Fine-tuning)",
         "class": GramDenseNet121Classifier,
         "path": ROOT_DIR / "models" / "best_model_densenet121.pth",
-        "metrics_path": ROOT_DIR / "models" / "metrics_densenet121.json",
+        "metrics_path": ROOT_DIR / "models" / "metrics_summary.json",
         "scenario": "Scenario 6: DenseNet121 two-phase fine-tuning",
         "architecture": "DenseNet121",
     },
@@ -240,7 +273,7 @@ MODEL_REGISTRY = {
         "name": "EfficientNet-B0 (Transfer Learning + Fine-tuning)",
         "class": GramEfficientNetB0Classifier,
         "path": ROOT_DIR / "models" / "best_model_efficientnet_b0.pth",
-        "metrics_path": ROOT_DIR / "models" / "metrics_efficientnet_b0.json",
+        "metrics_path": ROOT_DIR / "models" / "metrics_summary.json",
         "scenario": "Scenario 3c: EfficientNet-B0",
         "architecture": "EfficientNet-B0",
     },
@@ -248,7 +281,7 @@ MODEL_REGISTRY = {
         "name": "EfficientNet-B3 (Transfer Learning + Fine-tuning)",
         "class": GramEfficientNetB3Classifier,
         "path": ROOT_DIR / "models" / "best_model_efficientnet_b3.pth",
-        "metrics_path": ROOT_DIR / "models" / "metrics_efficientnet_b3.json",
+        "metrics_path": ROOT_DIR / "models" / "metrics_summary.json",
         "scenario": "Scenario 3d: EfficientNet-B3",
         "architecture": "EfficientNet-B3",
     },
@@ -299,83 +332,458 @@ def _load_state_dict(model_path: Path) -> dict:
     return state
 
 
+def seed_ai_models() -> None:
+    """Ensure all models in MODEL_REGISTRY exist in ai_models DB table.
+    Only the PRODUCTION_MODEL_KEY model is set active for classification.
+    YOLO detection model is seeded if missing. Fixes multiple-active-per-type issues."""
+    from app.database import SessionLocal
+    from app.models import AIModel
+
+    db = SessionLocal()
+    try:
+        for model_key, config in MODEL_REGISTRY.items():
+            existing = db.query(AIModel).filter(
+                AIModel.model_name == model_key,
+                AIModel.model_type == "Gram Classification",
+            ).first()
+            if not existing:
+                metrics = METRICS_CACHE.get(model_key, {})
+                test_m = metrics.get("test_metrics", {})
+                db.add(AIModel(
+                    model_name=model_key,
+                    model_type="Gram Classification",
+                    version=config.get("version", "1.0"),
+                    model_file_path=str(config["path"]),
+                    accuracy=test_m.get("accuracy"),
+                    precision_score=test_m.get("precision"),
+                    recall_score=test_m.get("recall"),
+                    f1_score=test_m.get("f1") or test_m.get("f1_score"),
+                    inference_time_s=metrics.get("inference_time_s"),
+                    is_active=(model_key == PRODUCTION_MODEL_KEY),
+                ))
+                print(f"  [SEED] Added {model_key} to ai_models (active={model_key == PRODUCTION_MODEL_KEY})")
+
+        # Register all YOLO .pt files found in models/ directory
+        models_dir = ROOT_DIR / "models"
+        yolo_files = sorted(models_dir.glob("*.pt"))
+        primary_yolo = os.environ.get("YOLO_MODEL_PATH", "models/bacteria_yolo_model.pt")
+        existing_detection = {m.model_name for m in db.query(AIModel).filter(AIModel.model_type == "Detection").all()}
+
+        for yolo_file in yolo_files:
+            yolo_name = yolo_file.stem  # e.g. "best_yolo", "best_yolo_new", "bacteria_yolo_model"
+            if yolo_name not in existing_detection:
+                is_primary = str(yolo_file) == str(ROOT_DIR / primary_yolo) or yolo_name == "bacteria_yolo_model"
+                db.add(AIModel(
+                    model_name=yolo_name,
+                    model_type="Detection",
+                    version="1.0",
+                    model_file_path=str(yolo_file),
+                    is_active=is_primary and yolo_name not in existing_detection,
+                ))
+                print(f"  [SEED] Added YOLO model: {yolo_name} (active={is_primary})")
+
+        # Ensure at least one detection model is active
+        active_detection = db.query(AIModel).filter(AIModel.model_type == "Detection", AIModel.is_active.is_(True)).first()
+        if not active_detection:
+            first_det = db.query(AIModel).filter(AIModel.model_type == "Detection").order_by(AIModel.id.asc()).first()
+            if first_det:
+                first_det.is_active = True
+                print(f"  [FIX] Activated detection model: {first_det.model_name}")
+
+        for mtype in ["Detection", "Gram Classification"]:
+            active_models = (
+                db.query(AIModel)
+                .filter(AIModel.model_type == mtype, AIModel.is_active.is_(True))
+                .order_by(AIModel.id.asc())
+                .all()
+            )
+            if len(active_models) > 1:
+                for m in active_models[1:]:
+                    print(f"  [FIX] Deactivating extra active {mtype} model: {m.model_name} (id={m.id})")
+                    m.is_active = False
+
+        db.commit()
+    finally:
+        db.close()
+
+
 def load_all_models() -> None:
-    """Load all models from the MODEL_REGISTRY at startup."""
+    """Load only active models from the DB at startup."""
     global MODELS, MODELS_LOADED, MODEL_LOAD_ERRORS, METRICS_CACHE
-    global MODEL, MODEL_LOADED, MODEL_LOAD_ERROR  # Legacy support
-    
+    global MODEL, MODEL_LOADED, MODEL_LOAD_ERROR
+
+    from app.database import SessionLocal
+    from app.models import AIModel
+
     print(f"[*] Loading models on device: {DEVICE}")
-    
+
+    # Pre-cache metrics from JSON files
     for model_key, config in MODEL_REGISTRY.items():
-        model_name = config["name"]
-        model_path = config["path"]
         metrics_path = config["metrics_path"]
+        if metrics_path.exists():
+            try:
+                METRICS_CACHE[model_key] = json.loads(metrics_path.read_text(encoding="utf-8"))
+            except Exception:
+                METRICS_CACHE[model_key] = {}
+
+    db = SessionLocal()
+    try:
+        active_models = db.query(AIModel).filter(AIModel.is_active.is_(True)).all()
+    finally:
+        db.close()
+
+    if not active_models:
+        print("[WARN] No active models found in DB. Nothing loaded.")
+        return
+
+    needs_yolo = False
+
+    for db_model in active_models:
+        model_key = db_model.model_name
+
+        if db_model.model_type == "Detection":
+            needs_yolo = True
+            continue
+
+        config = MODEL_REGISTRY.get(model_key)
+        if not config:
+            MODEL_LOAD_ERRORS[model_key] = f"Model key '{model_key}' not in MODEL_REGISTRY -- skipped."
+            print(f"    [ERROR] {MODEL_LOAD_ERRORS[model_key]}")
+            continue
+
+        model_path = config["path"]
         model_class = config["class"]
-        
-        print(f"\n[*] Loading {model_name} ({model_key})...")
-        
-        # Initialize loading state
         MODELS_LOADED[model_key] = False
         MODEL_LOAD_ERRORS[model_key] = ""
-        
-        # Check if model file exists
+
+        print(f"\n[*] Loading {config['name']} ({model_key})...")
+
         if not model_path.exists():
-            error_msg = f"Model file tidak ditemukan: {model_path}"
-            MODEL_LOAD_ERRORS[model_key] = error_msg
-            print(f"    [ERROR] {error_msg}")
+            MODEL_LOAD_ERRORS[model_key] = f"Model file tidak ditemukan: {model_path}"
+            print(f"    [ERROR] {MODEL_LOAD_ERRORS[model_key]}")
             continue
-        
+
         try:
-            # Initialize model
             model = model_class().to(DEVICE)
-            
-            # Load state dict
             state_dict = _load_state_dict(model_path)
             model.load_state_dict(state_dict, strict=True)
             model.eval()
-            
-            # Store model
             MODELS[model_key] = model
             MODELS_LOADED[model_key] = True
-            
-            # Count parameters
             params = sum(p.numel() for p in model.parameters())
             print(f"    [OK] Loaded successfully ({params:,} parameters)")
-            
-            # Load metrics
-            if metrics_path.exists():
-                try:
-                    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
-                    METRICS_CACHE[model_key] = metrics
-                    test_acc = metrics.get("test_metrics", {}).get("accuracy", 0)
-                    print(f"    [INFO] Test Accuracy: {test_acc:.2%}")
-                except Exception as e:
-                    print(f"    [WARN] Could not load metrics: {e}")
-                    METRICS_CACHE[model_key] = {}
-            
-            # Set legacy MODEL for backward compatibility (use ResNet50 as default)
-            if config.get("is_production", False):
+
+            metrics = METRICS_CACHE.get(model_key, {})
+            test_acc = metrics.get("test_metrics", {}).get("accuracy", 0)
+            if test_acc:
+                print(f"    [INFO] Test Accuracy: {test_acc:.2%}")
+
+            if model_key == PRODUCTION_MODEL_KEY:
                 MODEL = model
                 MODEL_LOADED = True
                 print(f"    [INFO] Set as production model for /predict endpoint")
-                
+
         except Exception as exc:
-            error_msg = f"Gagal load model: {exc}"
-            MODEL_LOAD_ERRORS[model_key] = error_msg
-            print(f"    [ERROR] {error_msg}")
+            MODEL_LOAD_ERRORS[model_key] = f"Gagal load model: {exc}"
+            print(f"    [ERROR] {MODEL_LOAD_ERRORS[model_key]}")
             continue
-    
-    # Summary
+
+    if needs_yolo:
+        print("\n[*] Loading YOLO detection model (active in DB)...")
+        from app.ai_pipeline import load_yolo_model as _load_yolo
+        _load_yolo()
+    else:
+        print("[*] No active Detection model -- YOLO not loaded.")
+
     loaded_count = sum(1 for v in MODELS_LOADED.values() if v)
-    total_count = len(MODEL_REGISTRY)
-    print(f"\n[*] Model loading complete: {loaded_count}/{total_count} models loaded")
-    
-    # Legacy fallback: if production model not set, use first available
+    print(f"\n[*] Model loading complete: {loaded_count} classification model(s) loaded")
+
     if not MODEL_LOADED and MODELS:
         first_key = next(iter(MODELS.keys()))
         MODEL = MODELS[first_key]
         MODEL_LOADED = True
         print(f"[WARN] Production model fallback: using {first_key}")
+
+
+def benchmark_model(model_key: str, test_data_path: str = None, sample_count: int = None) -> dict:
+    """Run a classification model against a test dataset and return metrics.
+
+    Args:
+        model_key: Model key in MODEL_REGISTRY (e.g. 'resnet50').
+        test_data_path: Path to ImageFolder test set. Falls back to TEST_DATA_PATH env var.
+        sample_count: Max images to evaluate. Falls back to BENCHMARK_SAMPLE_COUNT env var.
+
+    Returns:
+        dict with accuracy, precision, recall, f1, inference_time_s, num_samples.
+    """
+    import torch
+    from torch.utils.data import DataLoader
+    from torchvision import datasets
+
+    if model_key not in MODELS or not MODELS_LOADED.get(model_key):
+        config = MODEL_REGISTRY.get(model_key)
+        if not config:
+            raise RuntimeError(f"Model '{model_key}' not found in MODEL_REGISTRY.")
+        try:
+            model_instance = config["class"]().to(DEVICE)
+            sd = _load_state_dict(config["path"])
+            model_instance.load_state_dict(sd, strict=True)
+            model_instance.eval()
+            MODELS[model_key] = model_instance
+            MODELS_LOADED[model_key] = True
+        except Exception as e:
+            raise RuntimeError(f"Failed to load model '{model_key}' for benchmark: {e}")
+
+    if test_data_path is None:
+        test_data_path = os.environ.get("TEST_DATA_PATH", "models/test")
+    test_path = Path(test_data_path)
+    if not test_path.exists():
+        raise FileNotFoundError(f"Test data directory not found: {test_path}")
+
+    if sample_count is None:
+        sample_count = int(os.environ.get("BENCHMARK_SAMPLE_COUNT", "200"))
+
+    transform = transforms.Compose([
+        transforms.Resize(INPUT_SIZE),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+
+    dataset = datasets.ImageFolder(str(test_path), transform=transform)
+    class_names = dataset.classes
+
+    if sample_count and len(dataset) > sample_count:
+        indices = torch.randperm(len(dataset))[:sample_count].tolist()
+        dataset = torch.utils.data.Subset(dataset, indices)
+
+    loader = DataLoader(dataset, batch_size=32, shuffle=False, num_workers=0)
+
+    model = MODELS[model_key]
+    model.eval()
+
+    all_preds = []
+    all_labels = []
+    inference_times = []
+
+    with torch.no_grad():
+        for images, labels in loader:
+            images = images.to(DEVICE)
+            start = time.perf_counter()
+            outputs = model(images)
+            elapsed = time.perf_counter() - start
+            inference_times.append(elapsed)
+
+            _, preds = torch.max(outputs, 1)
+            all_preds.extend(preds.cpu().tolist())
+            all_labels.extend(labels.tolist())
+
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+    accuracy = float(accuracy_score(all_labels, all_preds))
+    precision = float(precision_score(all_labels, all_preds, average='macro', zero_division=0))
+    recall = float(recall_score(all_labels, all_preds, average='macro', zero_division=0))
+    f1 = float(f1_score(all_labels, all_preds, average='macro', zero_division=0))
+    avg_inference_time_s = sum(inference_times) / len(inference_times) if inference_times else 0.0
+
+    return {
+        "accuracy": accuracy,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "inference_time_s": round(avg_inference_time_s, 6),
+        "num_samples": len(all_labels),
+        "classes": class_names,
+    }
+
+
+def _prepare_yolo_dataset(base_dir: Path) -> Path:
+    """Prepare a merged YOLO dataset from separate gram_positive/gram_negative folders.
+
+    Supports Roboflow YOLOv8 export layout:
+        gram_positive/
+            train/images/  train/labels/
+            valid/images/  valid/labels/
+            test/images/   test/labels/
+            data.yaml
+        gram_negative/
+            (same structure)
+
+    If base_dir already has data.yaml, returns base_dir as-is.
+    Otherwise merges all subfolder datasets into a combined/ folder.
+    """
+    if (base_dir / "data.yaml").exists():
+        return base_dir
+
+    # Find subfolders that look like YOLO datasets
+    subdirs = sorted([d for d in base_dir.iterdir() if d.is_dir() and d.name != "combined"])
+    class_dirs = []
+    for d in subdirs:
+        has_data = (d / "data.yaml").exists()
+        has_images = (d / "images").exists()
+        has_splits = any((d / s / "images").exists() for s in ("train", "valid", "val"))
+        if has_data or has_images or has_splits:
+            class_dirs.append(d)
+
+    if not class_dirs:
+        raise FileNotFoundError(
+            f"Tidak ditemukan dataset YOLO di {base_dir}. "
+            "Pastikan ada folder gram_positive/gram_negative dengan struktur Roboflow."
+        )
+
+    if len(class_dirs) == 1 and (class_dirs[0] / "data.yaml").exists():
+        return class_dirs[0]
+
+    # Merge
+    combined = base_dir / "combined"
+    if combined.exists():
+        shutil.rmtree(combined)
+    combined.mkdir()
+
+    all_names = []
+    counts = {"train": 0, "valid": 0, "test": 0}
+
+    for cls_dir in class_dirs:
+        cls_name = cls_dir.name
+
+        # Read class names from data.yaml if available
+        yaml_path = cls_dir / "data.yaml"
+        if yaml_path.exists():
+            try:
+                import yaml as _yaml
+                with open(yaml_path, "r", encoding="utf-8") as f:
+                    ydata = _yaml.safe_load(f)
+                names = ydata.get("names", [cls_name])
+                if isinstance(names, dict):
+                    names = list(names.values())
+                for n in names:
+                    if n not in all_names:
+                        all_names.append(n)
+            except Exception:
+                if cls_name not in all_names:
+                    all_names.append(cls_name)
+        else:
+            if cls_name not in all_names:
+                all_names.append(cls_name)
+
+        # Copy images and labels from each split
+        # Roboflow uses: train/, valid/ (or val/), test/
+        for split in ("train", "valid", "val", "test"):
+            # Normalize: "val" and "valid" both map to "valid" in output
+            out_split = "valid" if split in ("val", "valid") else split
+            img_dir = cls_dir / split / "images"
+            lbl_dir = cls_dir / split / "labels"
+
+            if not img_dir.exists():
+                continue
+
+            out_img = combined / out_split / "images"
+            out_lbl = combined / out_split / "labels"
+            out_img.mkdir(parents=True, exist_ok=True)
+            out_lbl.mkdir(parents=True, exist_ok=True)
+
+            for f in img_dir.iterdir():
+                if f.is_file() and f.suffix.lower() in (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"):
+                    dst = out_img / f"{cls_name}_{f.name}"
+                    shutil.copy2(f, dst)
+                    counts[out_split] = counts.get(out_split, 0) + 1
+
+            if lbl_dir.exists():
+                for f in lbl_dir.iterdir():
+                    if f.is_file() and f.suffix == ".txt":
+                        # Match label filename to image filename prefix
+                        img_stem = f.stem
+                        dst = out_lbl / f"{cls_name}_{img_stem}.txt"
+                        shutil.copy2(f, dst)
+
+    # Generate combined data.yaml
+    import yaml as _yaml
+    nc = len(all_names)
+
+    # Determine which splits have data
+    splits_used = []
+    for s in ("train", "valid", "test"):
+        if (combined / s / "images").exists() and any((combined / s / "images").iterdir()):
+            splits_used.append(s)
+
+    yaml_content = {
+        "path": str(combined),
+        "train": "train/images" if "train" in splits_used else "",
+        "val": "valid/images" if "valid" in splits_used else "",
+        "nc": nc,
+        "names": {i: name for i, name in enumerate(all_names)},
+    }
+    if "test" in splits_used:
+        yaml_content["test"] = "test/images"
+
+    with open(combined / "data.yaml", "w", encoding="utf-8") as f:
+        _yaml.dump(yaml_content, f, default_flow_style=False, allow_unicode=True)
+
+    total = sum(counts.values())
+    print(f"  [YOLO MERGE] Digabung: {counts} dari {len(class_dirs)} dataset, {nc} kelas")
+    return combined
+
+
+def benchmark_yolo(test_data_path: str = None, model_path: str = None) -> dict:
+    """Run YOLO validation on a detection test dataset and return metrics.
+
+    Supports two layouts:
+    1. Single dataset with data.yaml at test_data_path
+    2. Separate gram_positive/ and gram_negative/ folders, each with their own
+       data.yaml or images/labels structure — auto-merged into a combined dataset.
+
+    Args:
+        test_data_path: Path to YOLO dataset directory.
+        model_path: Path to YOLO .pt checkpoint. Falls back to YOLO_MODEL_PATH env var.
+
+    Returns:
+        dict with map50, map50_95, precision, recall, num_samples.
+    """
+    from ultralytics import YOLO as _YOLO
+
+    if model_path is None:
+        model_path = os.environ.get("YOLO_MODEL_PATH", str(ROOT_DIR / "models" / "best_yolo.pt"))
+
+    model_file = Path(model_path)
+    if not model_file.exists():
+        raise FileNotFoundError(f"YOLO model file not found: {model_file}")
+
+    if test_data_path is None:
+        test_data_path = os.environ.get(
+            "YOLO_TEST_DATA_PATH",
+            str(ROOT_DIR / "models" / "yolo_test"),
+        )
+
+    test_dir = Path(test_data_path)
+    if not test_dir.exists():
+        raise FileNotFoundError(f"YOLO test data directory not found: {test_dir}")
+
+    # Auto-prepare dataset (merge if needed)
+    dataset_dir = _prepare_yolo_dataset(test_dir)
+    data_yaml = dataset_dir / "data.yaml"
+    if not data_yaml.exists():
+        raise FileNotFoundError(f"data.yaml tidak ditemukan di {dataset_dir}")
+
+    model = _YOLO(str(model_file))
+    results = model.val(data=str(data_yaml), verbose=False)
+
+    num_samples = 0
+    if hasattr(results, "seen"):
+        num_samples = int(results.seen)
+    elif hasattr(results, "nt_per_class"):
+        num_samples = int(sum(results.nt_per_class))
+    elif hasattr(results, "stats") and results.stats:
+        for v in results.stats.values():
+            if hasattr(v, "__len__"):
+                num_samples = max(num_samples, len(v))
+                break
+
+    return {
+        "map50": float(results.box.map50),
+        "map50_95": float(results.box.map),
+        "precision": float(results.box.p),
+        "recall": float(results.box.r),
+        "num_samples": num_samples,
+    }
 
 
 def _predict_tensor(image: Image.Image) -> dict:
@@ -625,29 +1033,15 @@ def _detect_and_classify(image: Image.Image, model_key: str, conf_threshold: flo
 async def startup_event() -> None:
     # Initialize database tables
     db_models.Base.metadata.create_all(bind=engine)
-    # Load all AI models
+    # Seed DB model records, then load only active models
+    seed_ai_models()
     load_all_models()
-    # Load YOLO Model
-    from app.ai_pipeline import load_yolo_model
-    load_yolo_model()
 
-from fastapi.staticfiles import StaticFiles
-
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Mount uploads directory so images can be accessed via URL
-app.mount("/static", StaticFiles(directory="uploads"), name="static")
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
-# Mount frontend folder for demo UI
-app.mount("/demo", StaticFiles(directory="frontend", html=True), name="frontend")
+# Mount frontend folder for demo UI if it exists
+if os.path.exists("frontend"):
+    app.mount("/demo", StaticFiles(directory="frontend", html=True), name="frontend")
+else:
+    print("[WARN] frontend folder not found, /demo endpoint disabled")
 
 @app.get("/")
 async def root():
@@ -680,6 +1074,38 @@ async def root():
             }
         }
     }
+
+@app.delete("/api/analysis/cleanup/{specimen_id}")
+def cleanup_specimen_classifications(specimen_id: int, request: Request, db: Session = Depends(get_db)):
+    from app.models import Specimen, Classification
+    import shutil
+
+    specimen = db.query(Specimen).filter(Specimen.id == specimen_id).first()
+    if not specimen:
+        raise HTTPException(status_code=404, detail="Specimen tidak ditemukan")
+
+    # Immutability check: Analis cannot modify validated specimens
+    if specimen.status == "validated" and getattr(request.state, "role", None) == "Analis":
+        raise HTTPException(
+            status_code=403,
+            detail="Data sudah tervalidasi (Selesai). Tidak dapat diubah. Hubungi Dokter untuk membuka kunci."
+        )
+        
+    db.query(Classification).filter(Classification.specimen_id == specimen_id).delete()
+    
+    crops_dir = os.path.join("uploads", "crops", str(specimen_id))
+    if os.path.exists(crops_dir):
+        try:
+            shutil.rmtree(crops_dir)
+        except Exception as e:
+            print(f"Failed to delete crops dir: {e}")
+            
+    specimen.status = "pending"
+    specimen.validation_status = "pending"
+    specimen.total_detected = 0
+    db.commit()
+    
+    return {"success": True, "message": "Classifications cleaned up successfully"}
 
 @app.get("/health")
 async def health_check():

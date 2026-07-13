@@ -22,7 +22,11 @@ class PaginatedResponse(BaseModel, Generic[T]):
 # PATIENT SCHEMAS
 # ===============================
 
+class SatusehatImportRequest(BaseModel):
+    nik: str = Field(..., min_length=16, max_length=16, description="16-digit NIK")
+
 class PatientBase(BaseModel):
+    nik: Optional[str] = Field(None, max_length=32, description="NIK pasien")
     nama_lengkap: str = Field(..., max_length=100)
     jenis_kelamin: str = Field(..., description="Laki-Laki atau Perempuan")
     tanggal_lahir: date
@@ -32,10 +36,12 @@ class PatientBase(BaseModel):
     date: Optional[datetime] = None
 
 class PatientCreate(PatientBase):
-    pass
+    id_pasien: Optional[str] = Field(None, max_length=20, description="No. Rekam Medis (RM)")
 
 
 class PatientUpdate(BaseModel):
+    id_pasien: Optional[str] = Field(None, max_length=20, description="No. Rekam Medis (RM)")
+    nik: Optional[str] = Field(None, max_length=32, description="NIK pasien")
     nama_lengkap: Optional[str] = Field(None, max_length=100)
     jenis_kelamin: Optional[str] = Field(None, description="Laki-Laki atau Perempuan")
     tanggal_lahir: Optional[date] = None
@@ -49,6 +55,7 @@ class PatientResponse(PatientBase):
     id_pasien: str
     created_at: datetime
     updated_at: datetime
+    latest_specimen_id: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -60,8 +67,22 @@ class PatientResponse(PatientBase):
 class SpecimenUploadResponse(BaseModel):
     id: int
     patient_id: int
+    accession_number: Optional[str] = None
+    specimen_type: Optional[str] = None
+    doctor_sender: Optional[str] = None
+    clinical_diagnosis: Optional[str] = None
+    collected_at: Optional[datetime] = None
+    received_at: Optional[datetime] = None
+    microscope_type: Optional[str] = None
+    magnification: Optional[str] = None
+    image_resolution: Optional[str] = None
+    analyst_note: Optional[str] = None
     file_name: str
     file_path: str
+    status: Optional[str] = None
+    validation_status: Optional[str] = None
+    validated_by_user_id: Optional[int] = None
+    validated_at: Optional[datetime] = None
     uploaded_at: datetime
 
     class Config:
@@ -102,6 +123,7 @@ class ProcessedCrop(BaseModel):
     image_file_name: str
     classification_gram: str
     classification_confidence: float
+    roi_source: Optional[str] = None
 
 class AnalysisProcessResponse(BaseModel):
     specimen_id: int
@@ -159,6 +181,8 @@ class AIModelSummaryResponse(BaseModel):
     version: str
     accuracy: Optional[float] = None
     f1_score: Optional[float] = None
+    precision_score: Optional[float] = None
+    recall_score: Optional[float] = None
     inference_time_s: Optional[float] = None
     status: str
     is_active: bool
@@ -199,6 +223,7 @@ class TrainingJobResponse(BaseModel):
 
 class RetrainStartRequest(BaseModel):
     model_id: int
+    version_label: Optional[str] = Field(None, max_length=50)
     epochs_head: Optional[int] = Field(10, ge=1, le=200)
     epochs_ft: Optional[int] = Field(30, ge=1, le=400)
     batch_size: Optional[int] = Field(32, ge=1, le=256)
@@ -218,6 +243,47 @@ class RetrainModelOptionResponse(BaseModel):
     task_type: str
     is_active: bool
     supports_retrain: bool
+
+
+class ModelUploadResponse(BaseModel):
+    id: int
+    model_name: str
+    model_type: str
+    version: str
+    model_file_path: Optional[str] = None
+    is_active: bool
+    message: str
+
+
+class BenchmarkResponse(BaseModel):
+    model_id: int
+    model_name: str
+    accuracy: float
+    precision: float
+    recall: float
+    f1: float
+    inference_time_s: float
+    num_samples: int
+
+
+class YoloBenchmarkResponse(BaseModel):
+    model_id: int
+    model_name: str
+    map50: float
+    map50_95: float
+    precision: float
+    recall: float
+    num_samples: int
+
+
+class YoloBenchmarkAllResponse(BaseModel):
+    results: List[YoloBenchmarkResponse] = []
+    errors: List[str] = []
+    message: str
+
+
+class MessageResponse(BaseModel):
+    message: str
 
 # ===============================
 # REPORT SCHEMAS
@@ -279,6 +345,7 @@ class ValidationTask(BaseModel):
 
 class ReportPatientData(BaseModel):
     id_pasien: str
+    nik: Optional[str] = None
     nama: str
     tanggal_lahir: date
     umur: int
@@ -287,6 +354,18 @@ class ReportPatientData(BaseModel):
 class ReportClinicalData(BaseModel):
     tanggal_sampel: datetime
     jenis_spesimen: str = "Pewarnaan Gram"
+    accession_number: Optional[str] = None
+    doctor_sender: Optional[str] = None
+    clinical_diagnosis: Optional[str] = None
+    collected_at: Optional[datetime] = None
+    received_at: Optional[datetime] = None
+    microscope_type: Optional[str] = None
+    magnification: Optional[str] = None
+    image_resolution: Optional[str] = None
+    analyst_note: Optional[str] = None
+    validation_status: Optional[str] = None
+    validated_at: Optional[datetime] = None
+    validator: Optional[str] = None
     analis: Optional[str] = "N/A"
     dokter: Optional[str] = "N/A"
 
@@ -303,6 +382,16 @@ class ReportEvidenceImage(BaseModel):
     image_url: str
     label: str
 
+class ReportClassificationDetail(BaseModel):
+    id: int
+    roi_bbox: Optional[list] = None
+    classification_gram: Optional[str] = None
+    classification_bentuk: Optional[str] = None
+    validation_gram: Optional[str] = None
+    validation_bentuk: Optional[str] = None
+    image_url: str
+    label: str
+
 class MedicalReportResponse(BaseModel):
     id_laporan: str = Field(..., description="ID unik untuk laporan ini, biasanya sama dengan specimen_id")
     tanggal_cetak: datetime
@@ -311,6 +400,8 @@ class MedicalReportResponse(BaseModel):
     data_klinis: ReportClinicalData
     ringkasan_hasil: ReportResultSummary
     gambar_bukti: List[ReportEvidenceImage] = []
+    main_image_url: Optional[str] = None
+    classifications: List[ReportClassificationDetail] = []
 
 
 # ===============================
@@ -337,6 +428,17 @@ class LoginResponse(BaseModel):
     token_type: str = "bearer"
     expires_at: datetime
     user: AuthUserResponse
+    refresh: str = Field(..., description="Refresh token untuk memperpanjang sesi")
+
+
+class RefreshRequest(BaseModel):
+    refresh: str
+
+
+class RefreshResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: datetime
 
 
 class AuthMessageResponse(BaseModel):
@@ -360,3 +462,34 @@ class ResetPasswordRequest(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=6)
+
+# ===============================
+# INTERNAL MESSAGE SCHEMAS
+# ===============================
+
+class InternalMessageResponse(BaseModel):
+    id: int
+    specimen_id: int
+    sender_id: int
+    sender_name: str
+    sender_role: str
+    message_text: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class InternalMessageCreate(BaseModel):
+    specimen_id: int
+    message_text: str
+
+class RevisionRequest(BaseModel):
+    message: str  # Wajib diisi dokter saat request revision
+
+class UnlockRequest(BaseModel):
+    message: Optional[str] = None
+
+class StatusActionResponse(BaseModel):
+    success: bool
+    message: str
+    new_status: str

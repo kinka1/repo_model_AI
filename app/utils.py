@@ -1,7 +1,20 @@
 import math
+from datetime import datetime, timedelta, timezone
 from typing import Any, Tuple
 from sqlalchemy.orm import Query
 from .schemas import PaginationMeta
+
+def get_local_now() -> datetime:
+    """
+    Returns current time in WIB (Western Indonesian Time) which is UTC+7.
+    Returns a naive datetime for database compatibility.
+    """
+    # Create timezone-aware datetime for UTC+7
+    tz_jakarta = timezone(timedelta(hours=7))
+    aware_now = datetime.now(tz_jakarta)
+    # Convert to naive for SQLAlchemy default behavior (avoids timezone issues in DB)
+    return aware_now.replace(tzinfo=None)
+
 
 def paginate_query(query: Query, page: int, per_page: int) -> Tuple[Any, PaginationMeta]:
     """

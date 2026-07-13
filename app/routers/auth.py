@@ -1,4 +1,5 @@
 import hashlib
+import re
 import secrets
 from datetime import datetime, timedelta
 from typing import Optional
@@ -19,13 +20,55 @@ from app.schemas import (
     ForgotPasswordResponse,
     LoginRequest,
     LoginResponse,
+    RefreshRequest,
+    RefreshResponse,
     ResetPasswordRequest,
 )
+from app.utils import get_local_now
 
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
-SESSION_TTL_HOURS = 12
+# HL7 FHIR ISO 8601 duration format
+# Examples: PT12H (12 hours), P7D (7 days), P30M (30 minutes)
+FHIR_DURATION_RE = re.compile(
+    r"^P"
+    r"(?:(?P<years>\d+(?:\.\d+)?)Y)?"
+    r"(?:(?P<months>\d+(?:\.\d+)?)M)?"
+    r"(?:(?P<days>\d+(?:\.\d+)?)D)?"
+    r"(?:T"
+    r"(?:(?P<hours>\d+(?:\.\d+)?)H)?"
+    r"(?:(?P<minutes>\d+(?:\.\d+)?)M)?"
+    r"(?:(?P<seconds>\d+(?:\.\d+)?)S)?"
+    r")?$"
+)
+
+
+def _parse_fhir_duration(fhir_str: str) -> timedelta:
+    """Parse an HL7 FHIR ISO 8601 duration string into a timedelta.
+
+    Examples:
+        PT12H  → timedelta(hours=12)
+        P7D    → timedelta(days=7)
+        P30M   → timedelta(minutes=30)
+        PT30M  → timedelta(minutes=30)
+        P1DT6H → timedelta(days=1, hours=6)
+    """
+    m = FHIR_DURATION_RE.match(fhir_str)
+    if not m:
+        raise ValueError(f"Invalid FHIR duration format: {fhir_str!r}")
+
+    parts = m.groupdict(default="0")
+    return timedelta(
+        days=float(parts["days"]),
+        hours=float(parts["hours"]),
+        minutes=float(parts["minutes"]),
+        seconds=float(parts["seconds"]),
+    )
+
+
+SESSION_TTL = _parse_fhir_duration("PT12H")
+REFRESH_TTL = _parse_fhir_duration("P7D")
 RESET_TOKEN_TTL_MINUTES = 30
 
 
@@ -62,7 +105,7 @@ def _find_valid_session(db: Session, raw_token: str) -> UserSession:
     )
     if not session:
         raise HTTPException(status_code=401, detail="Token tidak valid")
-    if session.expires_at < datetime.utcnow():
+    if session.expires_at < get_local_now():
         session.is_revoked = True
         db.add(session)
         db.commit()
@@ -83,7 +126,11 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Username atau password salah")
 
     raw_token = secrets.token_urlsafe(48)
-    expires_at = datetime.utcnow() + timedelta(hours=SESSION_TTL_HOURS)
+    raw_refresh = secrets.token_urlsafe(48)
+    now = get_local_now()
+
+    expires_at = now + SESSION_TTL
+    refresh_expires_at = now + REFRESH_TTL
 
     session = UserSession(
         user_id=user.id,
@@ -93,7 +140,15 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     )
     db.add(session)
 
-    user.last_login = datetime.utcnow()
+    refresh_session = UserSession(
+        user_id=user.id,
+        token_hash=_hash_token(raw_refresh),
+        expires_at=refresh_expires_at,
+        is_revoked=False,
+    )
+    db.add(refresh_session)
+
+    user.last_login = now
     db.add(user)
     db.commit()
 
@@ -108,6 +163,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             role=user.role,
             is_active=user.is_active,
         ),
+        refresh=raw_refresh,
     )
 
 
@@ -145,6 +201,53 @@ def logout(
     return AuthMessageResponse(message="Logout berhasil")
 
 
+@router.post("/refresh", response_model=RefreshResponse)
+def refresh(
+    payload: RefreshRequest,
+    db: Session = Depends(get_db),
+):
+    raw_refresh = payload.refresh
+    hashed = _hash_token(raw_refresh)
+    now = get_local_now()
+
+    refresh_session = (
+        db.query(UserSession)
+        .filter(
+            UserSession.token_hash == hashed,
+            UserSession.is_revoked.is_(False),
+            UserSession.expires_at > now,
+        )
+        .first()
+    )
+    if not refresh_session:
+        raise HTTPException(status_code=401, detail="Refresh token tidak valid atau sudah expired")
+
+    # Revoke old access sessions for this user
+    db.query(UserSession).filter(
+        UserSession.user_id == refresh_session.user_id,
+        UserSession.is_revoked.is_(False),
+        UserSession.id != refresh_session.id,
+    ).update({"is_revoked": True}, synchronize_session=False)
+
+    # Issue new access token
+    raw_token = secrets.token_urlsafe(48)
+    expires_at = now + SESSION_TTL
+
+    new_session = UserSession(
+        user_id=refresh_session.user_id,
+        token_hash=_hash_token(raw_token),
+        expires_at=expires_at,
+        is_revoked=False,
+    )
+    db.add(new_session)
+    db.commit()
+
+    return RefreshResponse(
+        access_token=raw_token,
+        expires_at=expires_at,
+    )
+
+
 @router.post("/forgot-password", response_model=ForgotPasswordResponse)
 def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
     user = (
@@ -162,7 +265,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
     if not user:
         return ForgotPasswordResponse(message=generic_message)
 
-    now = datetime.utcnow()
+    now = get_local_now()
 
     db.query(PasswordResetToken).filter(
         PasswordResetToken.user_id == user.id,
@@ -192,7 +295,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
 @router.post("/reset-password", response_model=AuthMessageResponse)
 def reset_password(payload: ResetPasswordRequest, db: Session = Depends(get_db)):
     token_hash = _hash_token(payload.token)
-    now = datetime.utcnow()
+    now = get_local_now()
 
     reset = (
         db.query(PasswordResetToken)
